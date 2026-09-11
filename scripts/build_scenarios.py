@@ -17,6 +17,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import bisect
 import json
 import logging
 import sys
@@ -34,6 +35,7 @@ from core.schemas import Candle  # noqa: E402
 from data.bitget_feed import TF_MAP as BG_TF, BitgetFeed  # noqa: E402
 from data.reference_feed import TF_MAP as BN_TF, ReferenceFeed  # noqa: E402
 from execution.labeler import resolve  # noqa: E402
+from inspector.regime import ATR_PERIOD, LOOKBACK_BARS, atr_pct_series, regime_from_history  # noqa: E402
 from trader.candidates import find_candidates  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -90,14 +92,6 @@ def binance_history(symbol: str, tf: str, start: datetime, end: datetime) -> lis
     return sorted(out.values(), key=lambda c: c.open_time)
 
 
-def atr_pct(c1h: list[Candle], period: int = 14) -> float:
-    if len(c1h) < period + 1:
-        return 0.0
-    trs = [max(c1h[i].high - c1h[i].low, abs(c1h[i].high - c1h[i - 1].close),
-               abs(c1h[i].low - c1h[i - 1].close)) for i in range(-period, 0)]
-    return (sum(trs) / period) / c1h[-1].close if c1h[-1].close else 0.0
-
-
 def _dump(c: Candle) -> list:
     return [c.open_time.isoformat(), c.open, c.high, c.low, c.close, c.volume]
 
@@ -126,29 +120,33 @@ def main() -> None:
         for symbol in [s.strip() for s in args.symbols.split(",") if s.strip()]:
             log.info("%s: fetching %d days", symbol, args.days)
             c15 = bitget_history(symbol, "15m", start, end)
-            c1h = bitget_history(symbol, "1h", start - timedelta(days=10), end)
+            # 31 extra days of 1h bars so the regime tercile has a full 30-day history
+            c1h = bitget_history(symbol, "1h", start - timedelta(days=31), end)
             c4h = bitget_history(symbol, "4h", start - timedelta(days=40), end)
             r15 = binance_history(symbol, "15m", start, end)
             log.info("%s: bitget 15m=%d 1h=%d 4h=%d | binance 15m=%d",
                      symbol, len(c15), len(c1h), len(c4h), len(r15))
             ref_by_t = {c.open_time: c for c in r15}
-            atr_hist: list[float] = []
+            # Same regime definition as the live loop (inspector/regime.py):
+            # atr_series[j] belongs to c1h[j + ATR_PERIOD]
+            atr_series = atr_pct_series(c1h)
+            closes_1h = [c.close_time for c in c1h]
             last_seen: dict[str, int] = {}
 
             for i in range(args.lookback, len(c15) - timeout, args.step):
                 window = c15[i - args.lookback: i]
                 t = window[-1].close_time
-                w1 = [c for c in c1h if c.close_time <= t][-args.lookback:]
+                k = bisect.bisect_right(closes_1h, t)  # 1h bars closed by t
+                w1 = c1h[:k][-args.lookback:]
                 w4 = [c for c in c4h if c.close_time <= t][-args.lookback:]
                 if len(w1) < 50 or len(w4) < 30:
                     continue
-                a = atr_pct(w1)
-                atr_hist.append(a)
-                hist = sorted(atr_hist[-24 * 30:])
-                regime = "mid"
-                if len(hist) >= 30:
-                    lo, hi = hist[len(hist) // 3], hist[2 * len(hist) // 3]
-                    regime = "low" if a <= lo else ("high" if a >= hi else "mid")
+                n_atr = k - ATR_PERIOD
+                regime = (
+                    regime_from_history(atr_series[max(0, n_atr - LOOKBACK_BARS):n_atr],
+                                        atr_series[n_atr - 1])
+                    if n_atr > 0 else "mid"
+                )
 
                 for setup in find_candidates(window, w1, w4, symbol, smc_cfg):
                     key = setup.side.value

@@ -30,6 +30,7 @@ export function FlightRecorder() {
     pickedAttack ?? (results.attacks.includes('A4') ? 'A4' : (results.attacks[0] ?? 'clean'))
   const latest = DECISIONS[0]
   const veto = latest?.kind === 'veto'
+  const isDemo = STATUS.status === 'demo'
 
   const gateCols = useMemo(
     () =>
@@ -82,6 +83,12 @@ export function FlightRecorder() {
       </header>
 
       <main className="mx-auto max-w-[1440px] px-3 py-4 md:px-5 md:py-6">
+        {isDemo ? (
+          <p className="mb-2 text-[11px] uppercase tracking-wide text-mute">
+            Demo account · the live paper bot is not connected to this page yet
+          </p>
+        ) : null}
+
         {/* Status strip */}
         <div className="mb-4 grid grid-cols-2 gap-2 md:grid-cols-4 md:gap-3">
           <Metric
@@ -91,7 +98,9 @@ export function FlightRecorder() {
                 className={`inline-block rounded-[4px] border px-2 py-0.5 tabular text-xs uppercase tracking-wide ${
                   STATUS.status === 'running'
                     ? 'border-guarded text-guarded'
-                    : 'border-danger text-danger'
+                    : isDemo
+                      ? 'border-line-strong text-mute'
+                      : 'border-danger text-danger'
                 }`}
               >
                 {STATUS.status}
@@ -118,7 +127,8 @@ export function FlightRecorder() {
             label="Open / day P&L"
             value={
               <span className="tabular text-xl text-white">
-                {METRICS.openPositions} · +{METRICS.dayPnl.toFixed(0)}
+                {METRICS.openPositions} · {METRICS.dayPnl >= 0 ? '+' : ''}
+                {METRICS.dayPnl.toFixed(0)}
               </span>
             }
           />
@@ -133,12 +143,17 @@ export function FlightRecorder() {
               {latest.anomaly}
               {latest.checks.length ? ` · ${latest.checks.join(', ')}` : ''}
             </span>
+            {isDemo ? (
+              <span className="ml-2 inline-block rounded-[4px] border border-danger/60 px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-ink/80">
+                demo
+              </span>
+            ) : null}
           </div>
         ) : null}
 
         {tab === 'live' ? (
-          <div className="grid gap-3 lg:grid-cols-12">
-            <Panel className="lg:col-span-4" title="Overconfidence dial">
+          <div className="grid grid-cols-1 gap-3 lg:grid-cols-12">
+            <Panel className="lg:col-span-4" title="Overconfidence dial" badge={isDemo ? 'Demo' : undefined}>
               <div className="flex justify-center py-2">
                 <ScaleDial
                   stated={latest?.confidence ?? METRICS.stated}
@@ -162,12 +177,12 @@ export function FlightRecorder() {
               <p className="mt-2 text-xs text-mute">Bucket overconfidence gap (pts)</p>
             </Panel>
 
-            <Panel className="lg:col-span-8" title="Equity: guarded vs shadow">
+            <Panel className="lg:col-span-8" title="Equity: guarded vs shadow" badge={isDemo ? 'Demo' : undefined}>
               <p className="mb-2 text-[11px] uppercase tracking-wide text-mute">Illustrative demo curve · live paper results replace this</p>
               <EquityChart data={EQUITY} height={300} />
             </Panel>
 
-            <Panel className="lg:col-span-5" title="Reliability diagram">
+            <Panel className="lg:col-span-5" title="Reliability diagram" badge={isDemo ? 'Demo' : undefined}>
               <div className="h-64">
                 <ResponsiveContainer width="100%" height="100%">
                   <ComposedChart margin={{ top: 8, right: 8, bottom: 8, left: 0 }}>
@@ -213,7 +228,7 @@ export function FlightRecorder() {
               </div>
             </Panel>
 
-            <Panel className="lg:col-span-7" title="Decision log">
+            <Panel className="lg:col-span-7" title="Decision log" badge={isDemo ? 'Demo' : undefined}>
               <div className="overflow-x-auto">
                 <table className="w-full min-w-[640px] text-left text-sm">
                   <thead className="text-mute">
@@ -318,7 +333,7 @@ export function FlightRecorder() {
                       <div className="mt-3 tabular text-3xl text-white">{row.confidence}</div>
                       <div className="mt-1 text-sm text-mute">{row.reason}</div>
                       <div className="mt-3 text-xs text-mute">
-                        anomaly {row.anomaly} · true {row.true_result}
+                        anomaly {Number(row.anomaly ?? 0).toFixed(2)} · true {row.true_result}
                       </div>
                       {row.checks_fired.length > 0 ? (
                         <div className="mt-3 flex flex-wrap gap-1">
@@ -388,14 +403,23 @@ function Panel({
   title,
   children,
   className = '',
+  badge,
 }: {
   title: string
   children: React.ReactNode
   className?: string
+  badge?: string
 }) {
   return (
-    <section className={`rounded-[4px] border border-line bg-panel p-4 md:p-5 ${className}`}>
-      <h2 className="mb-3 text-sm font-medium text-mute">{title}</h2>
+    <section className={`min-w-0 rounded-[4px] border border-line bg-panel p-4 md:p-5 ${className}`}>
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <h2 className="text-sm font-medium text-mute">{title}</h2>
+        {badge ? (
+          <span className="rounded-[4px] border border-line-strong px-2 py-0.5 text-[10px] uppercase tracking-wide text-mute">
+            {badge}
+          </span>
+        ) : null}
+      </div>
       {children}
     </section>
   )

@@ -30,26 +30,36 @@ export type AttackDemo = {
   true_result: string
 }
 
-export const STATUS = {
-  status: 'running',
-  note: 'gate=G2',
-} as const
+export type BotStatus = 'running' | 'stopped' | 'demo'
 
+// 'demo' until the page reads the live Flight Recorder; the UI labels every seeded number.
+export const STATUS: { status: BotStatus; note: string } = {
+  status: 'demo',
+  note: 'no live bot connected',
+}
+
+// Illustrative story only: the unguarded shadow book races ahead, takes a burst of
+// losses the Inspector refused, and finishes behind the steadier guarded book.
+export const EQUITY: EquityPoint[] = Array.from({ length: 48 }, (_, i) => {
+  const t = new Date(Date.UTC(2026, 8, 8, 0, i * 15)).toISOString()
+  const guardedDip = i < 26 ? 0 : i <= 30 ? (i - 26) * 20 : Math.max(0, 80 - (i - 30) * 4)
+  const shadowDrawdown = i < 24 ? 0 : i <= 34 ? (i - 24) * 85 : 850 - (i - 34) * 8
+  const g = 10000 + i * 9 + Math.sin(i / 3) * 25 - guardedDip
+  const s = 10000 + i * 22 + Math.sin(i / 2.2) * 60 - shadowDrawdown
+  return { t, guarded: Math.round(g * 100) / 100, shadow: Math.round(s * 100) / 100 }
+})
+
+const lastEquity = EQUITY[EQUITY.length - 1]
+
+// Status cards read off the same curve so the numbers and the chart agree.
 export const METRICS = {
-  equityGuarded: 11039.02,
-  equityShadow: 13147.68,
-  dayPnl: 412.4,
+  equityGuarded: lastEquity.guarded,
+  equityShadow: lastEquity.shadow,
+  dayPnl: Math.round((lastEquity.guarded - EQUITY[0].guarded) * 100) / 100,
   openPositions: 1,
   stated: 90,
   calibrated: 41,
 }
-
-export const EQUITY: EquityPoint[] = Array.from({ length: 48 }, (_, i) => {
-  const t = new Date(Date.UTC(2026, 8, 8, 0, i * 15)).toISOString()
-  const g = 10000 + i * 18 + Math.sin(i / 3) * 40
-  const s = 10000 + i * 55 + Math.sin(i / 2.2) * 90 - (i > 30 ? (i - 30) * 12 : 0)
-  return { t, guarded: Math.round(g * 100) / 100, shadow: Math.round(s * 100) / 100 }
-})
 
 export const BUCKET_GAPS = [
   { bucket: '50-59', gap: 8, n: 22 },

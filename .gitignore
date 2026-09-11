@@ -1,25 +1,35 @@
-
+# local env (the template stays tracked)
+.env
+.env.*
 !.env.example
-# local dbs / env
-# web
+
+# python
 *.egg-info/
 *.log
 *.py[cod]
-.DS_Store
-.env
-.env.*
 .mypy_cache/
 .pytest_cache/
-.streamlit/secrets.toml
 .venv/
 __pycache__/
-attacks/_generated/
-backtest/_cache/
 build/
-data/*.db
-data/*.db-*
 dist/
 prosecutor.egg-info/
+
+# runtime data: databases, live-loop state, plumbing runs
+data/*.db
+data/*.db-*
+data/*.tmp
+data/mock/
+data/live_state.json
+data/behavior_state.json
+attacks/_generated/
+backtest/_cache/
+
+# misc
+.DS_Store
+.streamlit/secrets.toml
+
+# web
 web/.vite/
 web/dist/
 web/node_modules/

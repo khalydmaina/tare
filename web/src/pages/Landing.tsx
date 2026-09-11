@@ -97,7 +97,7 @@ export function Landing() {
               <ScaleDial
                 stated={METRICS.stated}
                 calibrated={METRICS.calibrated}
-                label="When it says 90%, history says 41%. Gross vs net after tare."
+                label="Illustrative: when it says 90%, history says 41%. Gross vs net after tare."
               />
             </motion.div>
           </div>

@@ -15,6 +15,8 @@ An AI trader with brakes that tighten exactly where the model has proven it can�
 
 A deterministic SMC engine finds setups. An LLM decides take/skip and states a confidence (probability that TP hits before SL). A non-LLM **Inspector** sizes or vetoes every proposal using a calibration matrix, independent market data, and hard limits the model cannot touch. A **shadow book** records what would have happened without the Inspector. An **attack suite** tries to inflate confidence and slip losses past the gate.
 
+The Trader only chooses take/skip and a confidence. Stop-loss and take-profit always come from the SMC setup (prompt `trader_v2`), so confidence means the same thing everywhere and every result is scored on the levels that were actually traded.
+
 **What we test:** calibration gates can be beaten without ever claiming high confidence. Steer the model into a bucket that has historically been right and calibration approves the loss (A4). The fix is an ablation probe: re-ask the Trader with the news removed, and never let text raise confidence (G2). `docs/RESULTS.md` reports whether that holds on a real model, including if it does not.
 
 ## Shared blind spots (why not a second LLM?)
@@ -39,12 +41,13 @@ Reference feed (Binance) --------→ INSPECTOR → approve/shrink/veto
 cd tare
 python3 -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
-cp .env.example .env   # XAI_API_KEY, BITGET_* keys
+cp .env.example .env   # XAI_API_KEY; BITGET_* optional (without them fills are simulated)
 
-pytest                                   # 31 tests
-python scripts/run_attacks.py --llm sim  # offline plumbing check (NOT evidence)
+pytest                                         # 47 tests
+python scripts/run_attacks.py --llm sim        # offline plumbing check (NOT evidence)
+python scripts/run_live.py --once --mock-llm   # one live-loop cycle, simulated trader, writes to data/mock/
 
-cd web && npm install && npm run dev     # http://localhost:5173 and /app
+cd web && npm install && npm run dev           # http://localhost:5173 and /app
 ```
 
 ## Producing the real numbers
@@ -59,16 +62,37 @@ python scripts/measure_basis.py --days 30
 
 # 3. Attack evaluation with the real Trader model (candles blinded before the prompt).
 #    First 60% of scenarios fill the calibration matrix, attacks run on the rest.
-#    Responses are cached in data/llm_cache.json so re-runs are free.
+#    Responses are cached in data/llm_cache.json, keyed on the exact prompt, model and
+#    prompt version, so re-runs are free and a prompt change never reuses old answers.
+#    --save-calibration refuses to write a matrix built by the simulated trader.
 python scripts/run_attacks.py --scenarios data/scenarios.jsonl --llm real \
     --max-eval 120 --save-calibration
 
 # 4. Write docs/RESULTS.md (refuses to present sim output as evidence)
 python scripts/export_results.py
 
-# 5. Live paper loop on the VPS (G2 = full gate incl. ablation probe)
+# 5. Live paper loop on the VPS (G2 = full gate incl. ablation probe).
+#    Refuses to start without XAI_API_KEY instead of quietly using the simulated trader.
 python scripts/run_live.py --gate G2
 ```
+
+## Live loop
+
+Every 15-minute candle close, `scripts/run_live.py`:
+
+1. Closes guarded and shadow positions that hit TP, SL or the 48-bar timeout, and records each outcome.
+2. Feeds every shadow outcome (each take the Trader made, approved or vetoed) into `data/calibration.json`.
+3. Runs SMC, the Trader and the Inspector on **closed** candles only; the bar still forming is dropped.
+4. Saves broker, shadow and behaviour state (`data/live_state.json`, `data/behavior_state.json`), so a restart resumes open positions.
+5. Writes a health line to the bot status (feeds ok, setups, orders), which `export_results.py` and the dashboard show.
+
+Hard limits from `config/limits.yaml`: 2 concurrent positions, 1 per symbol, 3x leverage (size is capped, or vetoed when the capped risk is too small), 3% daily loss (resets 00:00 UTC), a 4h cooldown after 3 losses in a row, and a 10% drawdown halt.
+
+Until a calibration bucket has 20 outcomes, lookups fall back to `prior_p` (0.35). With the 3-point edge margin that only clears setups of about 2.1R or more, so the guarded book stays very selective until step 3 or live shadow outcomes fill the matrix. That is deliberate.
+
+The loop needs outbound HTTPS to `api.bitget.com` and `fapi.binance.com` (or set `market.reference_venue: bybit`). A symbol whose feed fails is skipped for that cycle and never traded on made-up candles.
+
+`TARE_DB` (default `data/tare.db`) is the one database shared by the live loop, attack harness, exporter and dashboard.
 
 ## Gate configs
 
@@ -92,7 +116,7 @@ python scripts/run_live.py --gate G2
 
 ## GitHub
 
-GitHub Pages (landing + Flight Recorder) deploys from `.github/workflows/pages.yml` on push to `master`.
+GitHub Pages (landing + Flight Recorder) deploys from `.github/workflows/pages.yml` on push to `master`; the workflow type-checks (`tsc -b`) before building.
 The web app reads `web/public/attack_metrics.json` and `attack_lab_demo.json` written by `run_attacks.py`,
 and labels every panel as Measured, Simulated, or Demo so nothing seeded passes as a result.
 

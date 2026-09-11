@@ -400,3 +400,13 @@ class FlightRecorder:
     def fetch_attack_runs(self) -> list[dict[str, Any]]:
         with self.conn() as c:
             return [dict(r) for r in c.execute("SELECT * FROM attack_runs ORDER BY id").fetchall()]
+
+    def fetch_outcomes(self, ref_type: Optional[str] = None) -> list[dict[str, Any]]:
+        with self.conn() as c:
+            if ref_type:
+                rows = c.execute(
+                    "SELECT * FROM outcomes WHERE ref_type=? ORDER BY id", (ref_type,)
+                ).fetchall()
+            else:
+                rows = c.execute("SELECT * FROM outcomes ORDER BY id").fetchall()
+            return [dict(r) for r in rows]

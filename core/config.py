@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from pathlib import Path
 from typing import Any
 
@@ -12,6 +13,23 @@ import yaml
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_SETTINGS = ROOT / "config" / "settings.yaml"
 DEFAULT_LIMITS = ROOT / "config" / "limits.yaml"
+
+
+def resolve_path(value: Path | str) -> Path:
+    """Anchor relative paths at the repo root so scripts agree wherever they run from."""
+    path = Path(value)
+    return path if path.is_absolute() else ROOT / path
+
+
+def db_path(settings: dict[str, Any] | None = None) -> Path:
+    """Flight Recorder database shared by the live loop, exporter, harness and dashboard.
+
+    TARE_DB wins when set; otherwise recorder.db_path from settings.yaml.
+    """
+    configured = os.getenv("TARE_DB") or (
+        (settings if settings is not None else load_settings()).get("recorder") or {}
+    ).get("db_path", "data/tare.db")
+    return resolve_path(configured)
 
 
 def load_yaml(path: Path | str) -> dict[str, Any]:

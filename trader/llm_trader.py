@@ -14,8 +14,16 @@ from openai import OpenAI
 from core.config import load_settings
 from core.schemas import Action, Candle, Proposal, Setup, Side
 
-PROMPT_PATH = Path(__file__).resolve().parent / "prompts" / "trader_v1.txt"
+PROMPTS_DIR = Path(__file__).resolve().parent / "prompts"
 _JSON_FENCE = re.compile(r"```(?:json)?\s*([\s\S]*?)```", re.IGNORECASE)
+
+
+def prompt_path_for(version: str) -> Path:
+    """trader/prompts/<version>.txt, so the logged prompt_version is the prompt actually sent."""
+    path = PROMPTS_DIR / f"{version}.txt"
+    if not path.exists():
+        raise FileNotFoundError(f"no prompt file for llm.prompt_version={version!r}: {path}")
+    return path
 
 
 def _extract_json(text: str) -> dict[str, Any]:
@@ -47,33 +55,17 @@ def _rr(side: Side, entry: float, sl: float, tp: float) -> float:
 
 def enforce_proposal_bounds(setup: Setup, raw: dict[str, Any]) -> dict[str, Any]:
     """
-    May tighten SL / move TP closer; never widen SL; never flip side.
-    Mutates a copy of raw fields and returns normalized dict.
+    The Trader only chooses take/skip and confidence. Side, entry, SL and TP always
+    come from the SMC setup, so a proposal is sized and scored on the same levels the
+    scenario bank labelled, and confidence means P(TP before SL) on exactly those levels.
     """
-    side = setup.side
     action_raw = str(raw.get("action", "skip")).lower().strip()
     action = Action.TAKE if action_raw == "take" else Action.SKIP
 
+    side = setup.side
     entry = float(setup.entry)
-    sl = float(raw.get("sl", setup.sl))
-    tp = float(raw.get("tp", setup.tp))
-
-    # Never flip side - ignore model side if it disagrees
-    model_side = str(raw.get("side", side.value)).lower().strip()
-    if model_side not in (side.value,):
-        # keep setup side
-        pass
-
-    if side == Side.LONG:
-        # SL must stay below entry; may only rise toward entry (tighten)
-        sl = min(sl, entry - 1e-12)
-        sl = max(sl, float(setup.sl))  # cannot go below original SL (widen)
-        # TP may only move closer (down toward entry) or stay
-        tp = max(min(tp, float(setup.tp)), entry + 1e-12)
-    else:
-        sl = max(sl, entry + 1e-12)
-        sl = min(sl, float(setup.sl))  # cannot go above original SL (widen)
-        tp = min(max(tp, float(setup.tp)), entry - 1e-12)
+    sl = float(setup.sl)
+    tp = float(setup.tp)
 
     conf = int(raw.get("confidence", 0))
     conf = max(0, min(100, conf))
@@ -83,11 +75,11 @@ def enforce_proposal_bounds(setup: Setup, raw: dict[str, Any]) -> dict[str, Any]
         "action": action,
         "side": side,
         "entry": entry,
-        "sl": float(sl),
-        "tp": float(tp),
+        "sl": sl,
+        "tp": tp,
         "confidence": conf,
         "rationale": rationale,
-        "rr": _rr(side, entry, float(sl), float(tp)),
+        "rr": _rr(side, entry, sl, tp),
     }
 
 
@@ -151,10 +143,10 @@ class LLMTrader:
         self.model = llm.get("model", "grok-4.5")
         self.temperature = float(llm.get("temperature", 0.2))
         self.max_retries = int(llm.get("max_retries", 2))
-        self.prompt_version = str(llm.get("prompt_version", "trader_v1"))
+        self.prompt_version = str(llm.get("prompt_version", "trader_v2"))
         key_env = str(llm.get("api_key_env", "XAI_API_KEY"))
         self.api_key = os.getenv(key_env, "") or os.getenv("XAI_API_KEY", "")
-        path = prompt_path or PROMPT_PATH
+        path = prompt_path or prompt_path_for(self.prompt_version)
         self.system_prompt = path.read_text(encoding="utf-8")
         self._client = client
         if self._client is None and self.api_key:
@@ -166,7 +158,7 @@ class LLMTrader:
         confidence: int = 70,
         action: str = "take",
     ) -> Proposal:
-        """Offline deterministic proposal for tests - still applies SL rules."""
+        """Offline deterministic proposal for tests - same level rules as a real call."""
         raw = {
             "action": action,
             "side": setup.side.value,
@@ -199,7 +191,7 @@ class LLMTrader:
         sentiment_digest: str,
         indicators: dict[str, Any],
     ) -> Proposal:
-        """Call the LLM; retry on invalid JSON; enforce SL/TP bounds in code."""
+        """Call the LLM; retry on invalid JSON; levels always come from the setup."""
         if self._client is None:
             # No API key - safe skip proposal for dry runs
             return Proposal(

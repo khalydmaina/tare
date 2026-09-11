@@ -251,3 +251,52 @@ class ShadowBook:
                 {"ts": p.ts.isoformat(), "equity": p.equity} for p in self.equity_curve
             ],
         }
+
+    def to_dict(self) -> dict[str, Any]:
+        """Restart-safe state: equity and open positions (closed trades live in the recorder)."""
+        return {
+            "starting_equity": self.starting_equity,
+            "equity": self.equity,
+            "open_positions": [
+                {
+                    "id": p.id,
+                    "proposal_id": p.proposal_id,
+                    "symbol": p.symbol,
+                    "side": p.side.value,
+                    "entry": p.entry,
+                    "sl": p.sl,
+                    "tp": p.tp,
+                    "size": p.size,
+                    "fill_price": p.fill_price,
+                    "fees_open": p.fees_open,
+                    "risk_frac": p.risk_frac,
+                    "opened_at": p.opened_at.isoformat(),
+                    "meta": p.meta,
+                }
+                for p in self.open_positions.values()
+            ],
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any], **kwargs: Any) -> "ShadowBook":
+        book = cls(starting_equity=float(data.get("starting_equity", 10_000.0)), **kwargs)
+        book.equity = float(data.get("equity", book.starting_equity))
+        book.equity_curve = [EquityPoint(ts=_utcnow(), equity=book.equity)]
+        for raw in data.get("open_positions", []):
+            pos = ShadowPosition(
+                id=str(raw["id"]),
+                proposal_id=raw.get("proposal_id"),
+                symbol=str(raw["symbol"]),
+                side=_as_side(raw["side"]),
+                entry=float(raw["entry"]),
+                sl=float(raw["sl"]),
+                tp=float(raw["tp"]),
+                size=float(raw["size"]),
+                fill_price=float(raw["fill_price"]),
+                fees_open=float(raw["fees_open"]),
+                risk_frac=float(raw["risk_frac"]),
+                opened_at=datetime.fromisoformat(raw["opened_at"]),
+                meta=dict(raw.get("meta") or {}),
+            )
+            book.open_positions[pos.id] = pos
+        return book

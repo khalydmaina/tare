@@ -19,6 +19,7 @@ Examples:
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import random
 import sys
@@ -33,13 +34,13 @@ load_dotenv(ROOT / ".env")
 
 from attacks.harness import GATES, AttackHarness, Scenario, save_metrics  # noqa: E402
 from backtest.blind import blind_bundle  # noqa: E402
-from core.config import ConfigBundle  # noqa: E402
+from core.config import ConfigBundle, db_path  # noqa: E402
 from core.schemas import Action, Candle, SentimentItem, Setup, Side  # noqa: E402
 from data.sentiment_feed import SentimentFeed  # noqa: E402
 from inspector.calibration import CalibrationMatrix  # noqa: E402
 from inspector.gate import decide  # noqa: E402
 from recorder.db import FlightRecorder  # noqa: E402
-from trader.llm_trader import LLMTrader  # noqa: E402
+from trader.llm_trader import LLMTrader, build_user_payload  # noqa: E402
 from trader.sim_trader import SimTrader  # noqa: E402
 
 
@@ -133,6 +134,12 @@ def add_background(scenarios: list[Scenario], k: int = 4, seed: int = 11) -> Non
 # --------------------------------------------------------------------------- #
 # Trader adapters
 # --------------------------------------------------------------------------- #
+def cache_key(trader: LLMTrader, payload: str) -> str:
+    """Exactly what the model sees, plus which model and prompt answer it."""
+    parts = [trader.model, trader.base_url, trader.prompt_version, trader.system_prompt, payload]
+    return hashlib.sha256("\n\x1f".join(parts).encode("utf-8")).hexdigest()
+
+
 def make_propose_fn(mode: str, settings: dict, cache_path: Path | None):
     base = LLMTrader(settings)
     if mode == "sim":
@@ -147,23 +154,23 @@ def make_propose_fn(mode: str, settings: dict, cache_path: Path | None):
         cache = json.loads(cache_path.read_text())
 
     def propose(setup: Setup, tfs: dict, digest: str):
-        b_setup, b_tfs, scale = blind_bundle(setup, {k: list(v) for k, v in tfs.items()})
-        key = json.dumps([b_setup.model_dump(mode="json"),
-                          [[round(c.close, 6) for c in v[-30:]] for _, v in sorted(b_tfs.items())],
-                          digest], sort_keys=True)
+        b_setup, b_tfs, _ = blind_bundle(setup, {k: list(v) for k, v in tfs.items()})
+        b_tfs = {k: v[-30:] for k, v in b_tfs.items()}
+        indicators = {"setup_score": setup.setup_score, "bias": setup.bias}
+        key = cache_key(base, build_user_payload(b_setup, b_tfs, digest, indicators))
         if key in cache:
             raw = cache[key]
             p = base.propose_mock(setup, confidence=raw["confidence"], action=raw["action"])
             p.rationale = raw.get("rationale", "")
             return p
-        indicators = {"setup_score": setup.setup_score, "bias": setup.bias}
-        p = base.propose(b_setup, {k: v[-30:] for k, v in b_tfs.items()}, digest, indicators)
-        # Map blinded prices back to real ones
-        p.entry, p.sl, p.tp = setup.entry, p.sl / scale, p.tp / scale
-        cache[key] = {"confidence": p.confidence, "action": p.action.value,
-                      "rationale": p.rationale}
-        if cache_path:
-            cache_path.write_text(json.dumps(cache))
+        p = base.propose(b_setup, b_tfs, digest, indicators)
+        # Levels always come from the setup; put the real prices back
+        p.entry, p.sl, p.tp = setup.entry, setup.sl, setup.tp
+        if not p.invalid_output:  # a transient API error must not become a cached skip
+            cache[key] = {"confidence": p.confidence, "action": p.action.value,
+                          "rationale": p.rationale}
+            if cache_path:
+                cache_path.write_text(json.dumps(cache))
         return p
 
     return propose, f"{base.model}@{base.base_url}"
@@ -221,11 +228,15 @@ def main() -> None:
         if n:
             print(f"  bucket {lo}-{hi}: n={n} hit={w / n:.2f} p_cal={cal.lookup(lo, 'mid'):.3f}")
     if args.save_calibration:
-        cal.save(ROOT / "data" / "calibration.json")
+        if trader_label == "sim":
+            print("not saving: a simulated-trader matrix must never reach data/calibration.json, "
+                  "which the live loop sizes real decisions with")
+        else:
+            cal.save(ROOT / "data" / "calibration.json")
 
     harness = AttackHarness(
         decide_fn=decide, propose_fn=propose, calibration=cal, settings=cfg.settings,
-        limits=cfg.limits, recorder=FlightRecorder(ROOT / cfg.settings["recorder"]["db_path"]),
+        limits=cfg.limits, recorder=FlightRecorder(db_path(cfg.settings)),
         trader_label=trader_label,
     )
     metrics = harness.run(

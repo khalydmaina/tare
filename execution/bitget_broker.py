@@ -7,11 +7,12 @@ import hashlib
 import hmac
 import json
 import logging
+import math
 import os
 import time
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Optional, Union
 
 import httpx
@@ -55,6 +56,18 @@ def fee_notional(notional: float, fee_bps: float) -> float:
     return abs(notional) * (fee_bps / 10_000.0)
 
 
+def exchange_size(size: float, spec: dict[str, float]) -> float:
+    """Round a size DOWN to the contract's size step, so rounding never adds risk."""
+    step = 10.0 ** -int(spec.get("volume_place", 3))
+    step = max(step, float(spec.get("size_multiplier") or 0.0))
+    return round(math.floor(size / step + 1e-9) * step, 10)
+
+
+def exchange_price(price: float, spec: dict[str, float]) -> str:
+    places = int(spec.get("price_place", 2))
+    return f"{price:.{places}f}"
+
+
 @dataclass
 class Position:
     order_id: str
@@ -74,8 +87,42 @@ class Position:
     meta: dict[str, Any] = field(default_factory=dict)
 
 
+def _position_to_dict(p: Position) -> dict[str, Any]:
+    return {
+        "order_id": p.order_id,
+        "symbol": p.symbol,
+        "side": p.side.value,
+        "size": p.size,
+        "entry": p.entry,
+        "sl": p.sl,
+        "tp": p.tp,
+        "fill_price": p.fill_price,
+        "fees": p.fees,
+        "opened_at": p.opened_at.isoformat(),
+        "exchange_order_id": p.exchange_order_id,
+        "meta": p.meta,
+    }
+
+
+def _position_from_dict(d: dict[str, Any]) -> Position:
+    return Position(
+        order_id=str(d["order_id"]),
+        symbol=str(d["symbol"]),
+        side=_as_side(d["side"]),
+        size=float(d["size"]),
+        entry=float(d["entry"]),
+        sl=float(d["sl"]),
+        tp=float(d["tp"]),
+        fill_price=float(d["fill_price"]),
+        fees=float(d["fees"]),
+        opened_at=datetime.fromisoformat(d["opened_at"]),
+        exchange_order_id=d.get("exchange_order_id"),
+        meta=dict(d.get("meta") or {}),
+    )
+
+
 class PaperModeAccount:
-    """In-memory equity and positions for offline / simulated paper trading."""
+    """Equity, positions and hard-limit state for paper trading; restart-safe via to_dict()."""
 
     def __init__(self, equity: float = 10_000.0) -> None:
         self.starting_equity = float(equity)
@@ -83,15 +130,30 @@ class PaperModeAccount:
         self.equity = float(equity)
         self.peak_equity = float(equity)
         self.day_start_equity = float(equity)
+        self.day = _utcnow().date().isoformat()
         self.positions: dict[str, Position] = {}
         self.closed: list[Position] = []
         self.order_log: list[dict[str, Any]] = []
         self.consecutive_losses = 0
+        self.cooldown_until: Optional[datetime] = None
+        # (losses in a row, cooldown hours); the live loop refreshes this from limits.yaml
+        self.loss_cooldown: tuple[int, float] = (3, 4.0)
+
+    def roll_day(self, now: Optional[datetime] = None) -> None:
+        """The daily-loss baseline resets at 00:00 UTC."""
+        today = (now or _utcnow()).astimezone(timezone.utc).date().isoformat()
+        if today != self.day:
+            self.day = today
+            self.day_start_equity = self.equity
+
+    def open_notional(self) -> float:
+        return sum(abs(p.fill_price * p.size) for p in self.positions.values())
 
     def to_account_state(self) -> AccountState:
         by_sym: dict[str, int] = {}
         for p in self.positions.values():
             by_sym[p.symbol] = by_sym.get(p.symbol, 0) + 1
+        notional = self.open_notional()
         return AccountState(
             equity=self.equity,
             available=max(0.0, self.cash),
@@ -100,6 +162,9 @@ class PaperModeAccount:
             open_positions=len(self.positions),
             positions_by_symbol=by_sym,
             consecutive_losses=self.consecutive_losses,
+            cooldown_until=self.cooldown_until,
+            leverage=notional / self.equity if self.equity > 0 else 0.0,
+            open_notional=notional,
         )
 
     def register_open(self, pos: Position) -> None:
@@ -108,14 +173,20 @@ class PaperModeAccount:
         self.equity = self.cash + self._unrealized(mark=None)
         self.peak_equity = max(self.peak_equity, self.equity)
 
-    def register_close(self, pos: Position, pnl: float, exit_fees: float) -> None:
+    def register_close(
+        self, pos: Position, pnl: float, exit_fees: float, now: Optional[datetime] = None
+    ) -> None:
         self.positions.pop(pos.order_id, None)
         self.cash += pnl - exit_fees
         self.equity = self.cash
         self.peak_equity = max(self.peak_equity, self.equity)
         self.closed.append(pos)
-        if pnl < 0:
+        if pnl - exit_fees < 0:
             self.consecutive_losses += 1
+            losses, hours = self.loss_cooldown
+            if losses > 0 and self.consecutive_losses >= losses:
+                self.cooldown_until = (now or _utcnow()) + timedelta(hours=float(hours))
+                self.consecutive_losses = 0
         else:
             self.consecutive_losses = 0
 
@@ -138,6 +209,34 @@ class PaperModeAccount:
         self.equity = self.cash + unrealized
         self.peak_equity = max(self.peak_equity, self.equity)
         return self.equity
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "starting_equity": self.starting_equity,
+            "cash": self.cash,
+            "equity": self.equity,
+            "peak_equity": self.peak_equity,
+            "day_start_equity": self.day_start_equity,
+            "day": self.day,
+            "consecutive_losses": self.consecutive_losses,
+            "cooldown_until": self.cooldown_until.isoformat() if self.cooldown_until else None,
+            "positions": [_position_to_dict(p) for p in self.positions.values()],
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "PaperModeAccount":
+        acct = cls(float(data.get("starting_equity", 10_000.0)))
+        for key in ("cash", "equity", "peak_equity", "day_start_equity"):
+            if key in data:
+                setattr(acct, key, float(data[key]))
+        acct.day = str(data.get("day", acct.day))
+        acct.consecutive_losses = int(data.get("consecutive_losses", 0))
+        cooldown = data.get("cooldown_until")
+        acct.cooldown_until = datetime.fromisoformat(cooldown) if cooldown else None
+        for raw in data.get("positions", []):
+            pos = _position_from_dict(raw)
+            acct.positions[pos.order_id] = pos
+        return acct
 
 
 class PaperBroker:
@@ -171,6 +270,7 @@ class PaperBroker:
         self.lot_step = float(lot_step if lot_step is not None else ex.get("lot_step", 0.001))
         self.account = account or PaperModeAccount(starting_equity)
         self._use_api = bool(self.api_key and self.api_secret and self.passphrase)
+        self._specs: dict[str, dict[str, float]] = {}
 
     def _headers(self, method: str, path: str, body: str = "") -> dict[str, str]:
         ts = str(int(time.time() * 1000))
@@ -254,7 +354,7 @@ class PaperBroker:
 
         if self._use_api:
             try:
-                fill_price, exchange_order_id = self._place_api_order(
+                fill_price, exchange_order_id, qty = self._place_api_order(
                     bg_symbol, side_e, qty, sl, tp
                 )
                 mode = "api"
@@ -311,6 +411,23 @@ class PaperBroker:
         )
         return record
 
+    def _contract_spec(self, symbol: str) -> dict[str, float]:
+        """Size and price precision for a USDT-M contract, fetched once per symbol."""
+        if symbol not in self._specs:
+            data = self._get(
+                "/api/v2/mix/market/contracts",
+                params={"productType": "USDT-FUTURES", "symbol": symbol},
+            )
+            row = data[0] if isinstance(data, list) and data else data
+            row = row if isinstance(row, dict) else {}
+            self._specs[symbol] = {
+                "volume_place": float(row.get("volumePlace") or 3),
+                "price_place": float(row.get("pricePlace") or 2),
+                "size_multiplier": float(row.get("sizeMultiplier") or 0),
+                "min_trade_num": float(row.get("minTradeNum") or 0),
+            }
+        return self._specs[symbol]
+
     def _place_api_order(
         self,
         symbol: str,
@@ -318,7 +435,11 @@ class PaperBroker:
         size: float,
         sl: float,
         tp: float,
-    ) -> tuple[float, str]:
+    ) -> tuple[float, str, float]:
+        spec = self._contract_spec(symbol)
+        qty = exchange_size(size, spec)
+        if qty <= 0 or qty < spec["min_trade_num"]:
+            raise ValueError(f"size {size} is below the {symbol} contract minimum")
         # Hedge-mode open: long → buy/open, short → sell/open
         bg_side = "buy" if side == Side.LONG else "sell"
         payload = {
@@ -326,20 +447,20 @@ class PaperBroker:
             "productType": "USDT-FUTURES",
             "marginMode": "crossed",
             "marginCoin": "USDT",
-            "size": str(size),
+            "size": f"{qty:.{int(spec['volume_place'])}f}",
             "side": bg_side,
             "tradeSide": "open",
             "orderType": "market",
             "clientOid": uuid.uuid4().hex[:32],
-            "presetStopSurplusPrice": str(tp),
-            "presetStopLossPrice": str(sl),
+            "presetStopSurplusPrice": exchange_price(tp, spec),
+            "presetStopLossPrice": exchange_price(sl, spec),
         }
         data = self._post("/api/v2/mix/order/place-order", payload)
         oid = str(data.get("orderId") or data.get("clientOid") or "")
         if not oid:
             raise RuntimeError(f"no orderId in response: {data}")
         fill = self._fetch_fill_price(symbol, oid)
-        return fill, oid
+        return fill, oid, qty
 
     def _fetch_fill_price(self, symbol: str, order_id: str) -> float:
         try:
@@ -376,7 +497,7 @@ class PaperBroker:
         next_open: Optional[float] = None,
         last_price: Optional[float] = None,
     ) -> dict[str, Any]:
-        """Close an open simulated (or tracked) position at market."""
+        """Close an open position. `price` is the level the labeler says it exited at."""
         pos = self.account.positions.get(order_id)
         if pos is None:
             raise KeyError(f"no open position {order_id}")
@@ -387,8 +508,9 @@ class PaperBroker:
             try:
                 exit_px = self._close_api_position(pos)
             except Exception as exc:
-                logger.warning("Bitget paper API close failed (%s); simulating", exc)
-                exit_px = None
+                # Usually the exchange already closed it at the attached SL/TP.
+                logger.warning("Bitget paper API close failed (%s); booking exit at %s", exc, price)
+                exit_px = price
 
         if exit_px is None:
             base = next_open if next_open is not None else last_price
