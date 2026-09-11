@@ -1,0 +1,42 @@
+name: Bitget demo check
+
+# Manual check of the Bitget demo API keys from a GitHub runner (the local network blocks
+# Bitget). Read-only by default: balance and position mode. With "order" it opens the
+# smallest demo position with attached stop-loss and take-profit, using the bot's own
+# order code, then closes it.
+on:
+  workflow_dispatch:
+    inputs:
+      order:
+        description: "Also open and close one minimum-size demo position"
+        type: boolean
+        default: false
+      symbol:
+        description: "Contract for the test order"
+        default: "DOGEUSDT"
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      BITGET_API_KEY: ${{ secrets.BITGET_API_KEY }}
+      BITGET_API_SECRET: ${{ secrets.BITGET_API_SECRET }}
+      BITGET_PASSPHRASE: ${{ secrets.BITGET_PASSPHRASE }}
+      ORDER: ${{ inputs.order }}
+      SYMBOL: ${{ inputs.symbol }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install
+        run: pip install pydantic pandas numpy pyyaml python-dotenv tenacity scipy httpx openai apscheduler
+
+      - name: Check the demo account
+        run: |
+          if [ "$ORDER" = "true" ]; then set -- --order; fi
+          python scripts/check_bitget_demo.py --symbol "$SYMBOL" "$@"
