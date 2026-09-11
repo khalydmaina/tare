@@ -77,7 +77,8 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--symbols", default="BTCUSDT,ETHUSDT,SOLUSDT")
     ap.add_argument("--days", type=int, default=45)
-    ap.add_argument("--step", type=int, default=4, help="Bars between SMC scans")
+    ap.add_argument("--step", type=int, default=1,
+                    help="Bars between SMC scans (a setup is only actionable on the bar it triggers)")
     ap.add_argument("--lookback", type=int, default=200)
     ap.add_argument("--dedupe-bars", type=int, default=8,
                     help="Skip a new setup on the same symbol/side within N bars")

@@ -62,9 +62,10 @@ def main() -> None:
         timeout_bars=cfg.settings["calibration"]["timeout_bars"],
     )
 
+    # Every bar: setups are only actionable on the bar they trigger (see generate_setups)
     if args.count_only:
-        n = engine.count_setups_only(args.symbol, c15, c1h, c4h, step=4)
-        log.info("SMC-only setup count≈%d (step=4). Estimate LLM calls≈%d", n, n)
+        n = engine.count_setups_only(args.symbol, c15, c1h, c4h, step=1)
+        log.info("SMC-only setup count≈%d (every bar). Estimate LLM calls≈%d", n, n)
         return
 
     result = engine.run(
@@ -73,7 +74,7 @@ def main() -> None:
         c1h,
         c4h,
         blind=blind,
-        step=8,
+        step=1,
         max_setups=args.max_setups,
     )
     cal = CalibrationMatrix.from_settings(cfg.settings)

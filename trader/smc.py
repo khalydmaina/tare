@@ -429,11 +429,19 @@ def generate_setups(
     candles_4h: Sequence[Candle],
     symbol: str,
     cfg: Optional[dict[str, Any]] = None,
+    *,
+    latest_only: bool = True,
 ) -> list[Setup]:
     """
     Build SMC setups on 15m using 1h/4h bias.
 
     Pattern: liquidity sweep → displacement (+ FVG) → OB/FVG re-entry.
+
+    latest_only (the default) keeps only setups whose zone re-entry happens on the newest
+    closed bar, priced at that bar's close: the fill a market order at the next open can
+    actually get. An earlier re-entry is stale, because the trade has already run or price
+    has moved on, and labelling it from the next bar builds wins into the scenario bank.
+    latest_only=False is the old historical scan, for inspecting structure only.
     """
     smc = merge_smc_cfg(cfg)
     lookback = int(smc["swing_lookback"])
@@ -487,6 +495,10 @@ def generate_setups(
                     entry = float(np.clip(entry, zone_low, zone_high))
                     if not _in_zone(entry, zone_low, zone_high):
                         entry = 0.5 * (zone_low + zone_high)
+                if latest_only:
+                    if j != len(df) - 1:
+                        break  # price came back to this zone on an earlier bar: stale
+                    entry = float(df.iloc[j].close)
 
                 atr = atr_at(df, j)
                 if atr <= 0:
