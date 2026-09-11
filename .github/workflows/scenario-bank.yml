@@ -1,0 +1,40 @@
+name: Scenario bank
+
+# Builds the real scenario bank one coin per job, in parallel: Bitget candles plus the OKX
+# reference, every setup labelled with what actually happened next. No LLM calls.
+# Download the scenarios-* artifacts and concatenate them into data/scenarios.jsonl.
+on:
+  workflow_dispatch:
+    inputs:
+      days:
+        description: "Days of history per coin"
+        default: "180"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        symbol: [BTCUSDT, ETHUSDT, SOLUSDT, XRPUSDT, DOGEUSDT, BNBUSDT, ADAUSDT, AVAXUSDT, LINKUSDT, LTCUSDT]
+    env:
+      DAYS: ${{ inputs.days }}
+      SYMBOL: ${{ matrix.symbol }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install
+        run: pip install -q pydantic pandas numpy pyyaml python-dotenv tenacity scipy httpx openai apscheduler
+      - name: Build scenarios
+        run: python scripts/build_scenarios.py --days "$DAYS" --symbols "$SYMBOL" --out "data/scenarios-$SYMBOL.jsonl"
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: scenarios-${{ matrix.symbol }}
+          path: data/scenarios-${{ matrix.symbol }}.jsonl
