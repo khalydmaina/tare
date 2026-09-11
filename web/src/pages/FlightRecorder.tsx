@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
 import {
   Bar,
   BarChart,
@@ -19,9 +19,15 @@ import { BUCKET_GAPS, DECISIONS, EQUITY, METRICS, RELIABILITY, STATUS } from '..
 import { GATES, pct, sourceLabel, useResults } from '../data/results'
 
 type Tab = 'live' | 'attacks' | 'results'
+const TABS: readonly Tab[] = ['live', 'attacks', 'results']
+const BRAND = `${import.meta.env.BASE_URL}brand`
 
 export function FlightRecorder() {
-  const [tab, setTab] = useState<Tab>('live')
+  // The tab lives in the URL (?tab=attacks), so landing-page links and refreshes land on it
+  const [params, setParams] = useSearchParams()
+  const requested = params.get('tab')
+  const tab: Tab = TABS.includes(requested as Tab) ? (requested as Tab) : 'live'
+  const setTab = (next: Tab) => setParams(next === 'live' ? {} : { tab: next }, { replace: true })
   const results = useResults()
   const [pickedScenario, setScenario] = useState<string | null>(null)
   const [pickedAttack, setAttack] = useState<string | null>(null)
@@ -51,7 +57,7 @@ export function FlightRecorder() {
         <div className="mx-auto flex h-14 max-w-[1440px] items-center justify-between gap-4 px-3 md:px-5">
           <div className="flex items-center gap-3">
             <Link to="/" className="flex items-center gap-2">
-              <img src="/brand/tare-mark.svg" alt="" className="h-7 w-7" />
+              <img src={`${BRAND}/tare-mark.svg`} alt="" className="h-7 w-7" />
               <span className="tare-wordmark text-lg text-white">tare</span>
             </Link>
             <span className="hidden text-mute md:inline">/</span>

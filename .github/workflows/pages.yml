@@ -32,6 +32,8 @@ jobs:
           # Project Pages base path = /<repo>/
           export BASE="/${GITHUB_REPOSITORY#*/}/"
           npx vite build --base "$BASE"
+          # Pages has no SPA routing: serve the app for deep links such as /tare/app
+          cp dist/index.html dist/404.html
       - uses: actions/upload-pages-artifact@v3
         with:
           path: web/dist
