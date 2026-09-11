@@ -218,3 +218,27 @@ def test_atr_positive_on_fixture():
     df = candles_to_df(build_long_sweep_displacement_15m())
     atr = atr_series(df, 14)
     assert atr.iloc[-1] > 0
+
+
+def test_setup_enters_at_the_last_close_when_the_zone_is_retaken_now(smc_cfg):
+    c15 = build_long_sweep_displacement_15m()  # the last bar re-enters the zone
+    c1h = build_htf_bullish(60, minutes=60, timeframe="1h")
+    c4h = build_htf_bullish(60, minutes=240, timeframe="4h")
+    longs = [s for s in generate_setups(c15, c1h, c4h, "BTCUSDT", smc_cfg) if s.side == Side.LONG]
+    assert longs
+    assert longs[0].entry == c15[-1].close
+    assert longs[0].sl < longs[0].entry < longs[0].tp
+
+
+def test_stale_setups_are_dropped(smc_cfg):
+    """Price came back to the zone three bars ago: a live bot can no longer take that entry."""
+    c15 = build_long_sweep_displacement_15m()
+    start = len(c15)
+    later = [(100.0, 100.4, 99.9, 100.2), (100.2, 100.5, 100.0, 100.3), (100.3, 100.6, 100.1, 100.4)]
+    for k, bar in enumerate(later):
+        c15.append(make_candle(start + k, *_ohlc(*bar)))
+    c1h = build_htf_bullish(60, minutes=60, timeframe="1h")
+    c4h = build_htf_bullish(60, minutes=240, timeframe="4h")
+
+    assert generate_setups(c15, c1h, c4h, "BTCUSDT", smc_cfg, latest_only=False)
+    assert not generate_setups(c15, c1h, c4h, "BTCUSDT", smc_cfg)
