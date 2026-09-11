@@ -44,6 +44,16 @@ def _extract_json(text: str) -> dict[str, Any]:
     return data
 
 
+def _retry_after(exc: Exception, default: float = 20.0, cap: float = 60.0) -> float:
+    """Seconds a rate-limited provider asks us to wait (retry-after header), bounded."""
+    response = getattr(exc, "response", None)
+    try:
+        value = float(response.headers.get("retry-after")) if response is not None else default
+    except (TypeError, ValueError):
+        value = default
+    return max(1.0, min(cap, value))
+
+
 def _rr(side: Side, entry: float, sl: float, tp: float) -> float:
     risk = abs(entry - sl)
     if risk <= 0:
@@ -139,15 +149,17 @@ class LLMTrader:
     ) -> None:
         self.settings = settings or load_settings()
         llm = self.settings.get("llm", {})
-        self.base_url = llm.get("base_url", "https://api.x.ai/v1")
-        self.model = llm.get("model", "grok-4.5")
+        # Environment wins, so GitHub secrets or .env switch provider without editing settings
+        self.base_url = os.getenv("LLM_BASE_URL") or llm.get("base_url", "https://api.x.ai/v1")
+        self.model = os.getenv("LLM_MODEL") or llm.get("model", "grok-4.5")
         self.temperature = float(llm.get("temperature", 0.2))
         self.max_retries = int(llm.get("max_retries", 2))
         self.prompt_version = str(llm.get("prompt_version", "trader_v2"))
         key_env = str(llm.get("api_key_env", "XAI_API_KEY"))
-        self.api_key = os.getenv(key_env, "") or os.getenv("XAI_API_KEY", "")
+        self.api_key = os.getenv("LLM_API_KEY") or os.getenv(key_env, "") or os.getenv("XAI_API_KEY", "")
         path = prompt_path or prompt_path_for(self.prompt_version)
         self.system_prompt = path.read_text(encoding="utf-8")
+        self.json_mode = True  # switched off for providers that reject response_format
         self._client = client
         if self._client is None and self.api_key:
             self._client = OpenAI(api_key=self.api_key, base_url=self.base_url)
@@ -191,7 +203,7 @@ class LLMTrader:
         sentiment_digest: str,
         indicators: dict[str, Any],
     ) -> Proposal:
-        """Call the LLM; retry on invalid JSON; levels always come from the setup."""
+        """Call the LLM; retry on invalid JSON or rate limits; levels always come from the setup."""
         if self._client is None:
             # No API key - safe skip proposal for dry runs
             return Proposal(
@@ -218,15 +230,17 @@ class LLMTrader:
 
         for _ in range(attempts):
             try:
-                resp = self._client.chat.completions.create(
-                    model=self.model,
-                    temperature=self.temperature,
-                    messages=[
+                request: dict[str, Any] = {
+                    "model": self.model,
+                    "temperature": self.temperature,
+                    "messages": [
                         {"role": "system", "content": self.system_prompt},
                         {"role": "user", "content": user_msg},
                     ],
-                    response_format={"type": "json_object"},
-                )
+                }
+                if self.json_mode:
+                    request["response_format"] = {"type": "json_object"}
+                resp = self._client.chat.completions.create(**request)
                 content = resp.choices[0].message.content or ""
                 raw = _extract_json(content)
                 # Basic schema check before bounds
@@ -239,6 +253,11 @@ class LLMTrader:
             except Exception as exc:  # noqa: BLE001 - retry then skip
                 last_err = str(exc)
                 raw = None
+                status = getattr(exc, "status_code", None)
+                if status == 400 and self.json_mode and "response_format" in last_err:
+                    self.json_mode = False  # ask plainly and parse the JSON out of the reply
+                elif status == 429:
+                    time.sleep(_retry_after(exc))
 
         latency_ms = (time.perf_counter() - t0) * 1000.0
 
