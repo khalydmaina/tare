@@ -14,7 +14,8 @@ def test_api_close_sends_size_at_contract_precision(monkeypatch):
     pos = SimpleNamespace(symbol="DOGEUSDT", side=Side.LONG, size=44.0, fill_price=0.2)
     assert broker._close_api_position(pos) == 0.2
     assert sent["size"] == "44"
-    assert (sent["side"], sent["tradeSide"]) == ("sell", "close")
+    # Hedge mode: the side names the position being closed (verified on the demo exchange)
+    assert (sent["side"], sent["tradeSide"]) == ("buy", "close")
 
 
 def test_demo_requests_carry_the_paper_trading_header():
