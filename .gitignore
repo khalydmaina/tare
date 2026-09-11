@@ -34,3 +34,4 @@ backtest/_cache/
 web/.vite/
 web/dist/
 web/node_modules/
+web/public/live.json

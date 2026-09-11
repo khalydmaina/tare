@@ -522,8 +522,11 @@ def main() -> None:
     except (KeyboardInterrupt, SystemExit):
         pass
     finally:
-        # Keep the last health line, so a stopped bot still says how its final cycle went
-        rec.set_status("stopped", rec.get_status().get("note") or note)
+        # Keep the last health line, so a stopped bot still says how its final cycle went.
+        # Under --once an outside scheduler (GitHub Actions cron) runs the bot, so it stays
+        # "running"; the website judges staleness from updated_at instead.
+        if not args.once:
+            rec.set_status("stopped", rec.get_status().get("note") or note)
     if args.once and not last["ok"]:
         sys.exit(1)  # a scheduler (GitHub Actions) should see a failed cycle as a failed run
 
