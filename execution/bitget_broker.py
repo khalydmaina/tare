@@ -551,12 +551,14 @@ class PaperBroker:
 
     def _close_api_position(self, pos: Position) -> float:
         bg_side = "sell" if pos.side == Side.LONG else "buy"
+        # Bitget rejects a size with more decimals than the contract allows ("44.0" for a 0-place coin)
+        spec = self._contract_spec(pos.symbol)
         payload = {
             "symbol": pos.symbol,
             "productType": "USDT-FUTURES",
             "marginMode": "crossed",
             "marginCoin": "USDT",
-            "size": str(pos.size),
+            "size": f"{pos.size:.{int(spec['volume_place'])}f}",
             "side": bg_side,
             "tradeSide": "close",
             "orderType": "market",
