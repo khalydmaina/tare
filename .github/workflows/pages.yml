@@ -28,6 +28,7 @@ jobs:
         working-directory: web
         run: |
           npm ci
+          npx tsc -b
           # Project Pages base path = /<repo>/
           export BASE="/${GITHUB_REPOSITORY#*/}/"
           npx vite build --base "$BASE"
@@ -37,6 +38,8 @@ jobs:
 
   deploy:
     needs: build
+    # Free GitHub Pages needs a public repo; while private, build (type-check) only
+    if: ${{ !github.event.repository.private }}
     runs-on: ubuntu-latest
     environment:
       name: github-pages

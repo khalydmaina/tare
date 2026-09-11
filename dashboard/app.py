@@ -118,8 +118,12 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-import os
-DB_PATH = Path(os.getenv("TARE_DB", str(ROOT / "data" / "tare.db")))
+from dotenv import load_dotenv  # noqa: E402
+
+from core.config import db_path  # noqa: E402
+
+load_dotenv(ROOT / ".env")
+DB_PATH = db_path()  # same database the live loop writes (TARE_DB or settings.yaml)
 RESULTS_PATH = ROOT / "docs" / "attack_metrics.json"
 
 

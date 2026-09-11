@@ -3,9 +3,16 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
-from typing import Callable, Optional
+from typing import Any, Callable, Optional, Sequence
 
 TF_MINUTES = {"1m": 1, "5m": 5, "15m": 15, "1h": 60, "4h": 240, "1d": 1440}
+
+
+def closed_candles(candles: Sequence[Any], now: Optional[datetime] = None) -> list[Any]:
+    """Drop the bar still forming. Exchanges return it as the newest kline, and a few
+    seconds of data skews SMC, candle statistics (C2) and the cross-venue check (C1)."""
+    now = now or datetime.now(timezone.utc)
+    return [c for c in candles if c.close_time <= now]
 
 
 def tf_to_minutes(tf: str) -> int:

@@ -3,8 +3,9 @@
 
 - Attack table comes from docs/attack_metrics.json. If it was produced by the
   simulated trader, the section is stamped NOT EVIDENCE.
-- Live paper numbers come from data/tare.db (the live loop), never from the
-  demo seed (data/demo.db). Sections with no data say so instead of guessing.
+- Live paper numbers come from the Flight Recorder the live loop writes (TARE_DB,
+  default data/tare.db), never from the demo seed (data/demo.db). Sections with
+  no data say so instead of guessing.
 """
 
 from __future__ import annotations
@@ -14,9 +15,13 @@ import math
 import sys
 from pathlib import Path
 
+from dotenv import load_dotenv
+
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
+load_dotenv(ROOT / ".env")
 
+from core.config import db_path  # noqa: E402
 from recorder.db import FlightRecorder  # noqa: E402
 
 GATE_DESC = {
@@ -70,15 +75,24 @@ def attack_section(lines: list[str]) -> None:
 
 
 def live_section(lines: list[str]) -> None:
-    db = ROOT / "data" / "tare.db"
+    db = db_path()
+    shown = db.relative_to(ROOT) if db.is_relative_to(ROOT) else db.name
     if not db.exists():
-        lines += ["_No live paper data yet. Start `python scripts/run_live.py` on the VPS._", ""]
+        lines += [f"_No live paper data yet (`{shown}` not found). "
+                  "Start `python scripts/run_live.py` on the VPS._", ""]
         return
     rec = FlightRecorder(db)
-    for book in ("guarded", "shadow"):
+    status = rec.get_status()
+    lines += [f"Bot status: `{status.get('status')}` ({status.get('note') or 'no note'}), "
+              f"updated {status.get('updated_at')}", ""]
+    for book, ref_type in (("guarded", "real"), ("shadow", "shadow")):
+        outcomes = rec.fetch_outcomes(ref_type)
+        wins = sum(1 for o in outcomes if o["result"] == "win")
+        trades = (f"{len(outcomes)} closed trades, win rate {100 * wins / len(outcomes):.0f}%"
+                  if outcomes else "no closed trades yet")
         eq = [e["equity"] for e in rec.fetch_equity(book)]
         if len(eq) < 2:
-            lines.append(f"- {book}: not enough data")
+            lines.append(f"- {book}: not enough equity marks yet; {trades}")
             continue
         peak, mdd = eq[0], 0.0
         for v in eq:
@@ -86,10 +100,11 @@ def live_section(lines: list[str]) -> None:
             mdd = max(mdd, (peak - v) / peak if peak else 0)
         rets = [(b - a) / a for a, b in zip(eq, eq[1:]) if a]
         sd = (sum((r - sum(rets) / len(rets)) ** 2 for r in rets) / len(rets)) ** 0.5 if rets else 0
+        # One equity mark per 15m cycle → 96 marks a day
         sharpe = (sum(rets) / len(rets)) / sd * math.sqrt(96 * 365) if sd else 0.0
         lines.append(f"- {book}: {eq[0]:.2f} -> {eq[-1]:.2f} "
                      f"({100 * (eq[-1] / eq[0] - 1):+.2f}%), max DD {100 * mdd:.2f}%, "
-                     f"annualised Sharpe {sharpe:.2f} over {len(eq)} marks")
+                     f"annualised Sharpe {sharpe:.2f} over {len(eq)} marks; {trades}")
     lines.append("")
 
 

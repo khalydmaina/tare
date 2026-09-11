@@ -1,0 +1,61 @@
+name: Market data check
+
+# Manual job for when the local network cannot reach the exchanges. From a GitHub runner it
+# checks Bitget / Binance / Bybit, runs one live-loop cycle on real candles with the simulated
+# trader (no keys, no orders), and can build a real scenario bank as a downloadable artifact.
+on:
+  workflow_dispatch:
+    inputs:
+      scenario_days:
+        description: "Also build a real scenario bank over this many days (0 = skip)"
+        default: "0"
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install
+        run: pip install pydantic pandas numpy pyyaml python-dotenv tenacity scipy httpx openai apscheduler
+
+      - name: Exchange reachability
+        run: |
+          for url in \
+            "https://api.bitget.com/api/v2/mix/market/candles?symbol=BTCUSDT&productType=USDT-FUTURES&granularity=15m&limit=2" \
+            "https://fapi.binance.com/fapi/v1/klines?symbol=BTCUSDT&interval=15m&limit=2" \
+            "https://api.bybit.com/v5/market/kline?category=linear&symbol=BTCUSDT&interval=15&limit=2"; do
+            code=$(curl -s -o /tmp/body -w "%{http_code}" --max-time 20 "$url" || echo "000")
+            echo "$code ${url%%\?*} $(head -c 120 /tmp/body 2>/dev/null)"
+          done
+
+      - name: One live cycle on real candles (simulated trader)
+        run: python scripts/run_live.py --once --mock-llm --gate G2
+
+      - name: What the cycle recorded
+        run: |
+          python - <<'EOF'
+          import sqlite3
+          db = sqlite3.connect("data/mock/tare.db")
+          print("status:", db.execute("select status, note from bot_status").fetchone())
+          for t in ("cycles", "setups", "proposals", "decisions", "orders", "shadow_positions"):
+              print(f"{t:17s}", db.execute(f"select count(*) from {t}").fetchone()[0])
+          print("regimes:", db.execute("select symbol, regime from cycles").fetchall())
+          EOF
+
+      - name: Build scenario bank
+        if: ${{ inputs.scenario_days != '0' }}
+        run: python scripts/build_scenarios.py --days "${{ inputs.scenario_days }}"
+
+      - name: Upload scenario bank
+        if: ${{ inputs.scenario_days != '0' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: scenarios
+          path: data/scenarios.jsonl

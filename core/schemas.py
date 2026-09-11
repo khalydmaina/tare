@@ -179,6 +179,7 @@ class AccountState(BaseModel):
     kill_switch: bool = False
     halted_until: Optional[datetime] = None
     leverage: float = 1.0
+    open_notional: float = 0.0  # sum of |fill x size| over open positions, for the leverage cap
 
 
 class Outcome(BaseModel):

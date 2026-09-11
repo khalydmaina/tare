@@ -177,6 +177,29 @@ def decide(
         )
 
     size = sizing.size_for_risk(risk, proposal, ctx.account, lot_step=lot_step)
+
+    # Hard cap: open notional plus this position may not exceed max_leverage x equity.
+    max_leverage = float(limits.get("max_leverage", 3))
+    headroom = max(0.0, max_leverage * ctx.account.equity - ctx.account.open_notional)
+    entry_px = abs(float(proposal.entry))
+    if entry_px > 0 and size * entry_px > headroom:
+        capped = headroom / entry_px
+        size = round(int(capped / lot_step + 1e-12) * lot_step, 10) if lot_step > 0 else capped
+        equity = ctx.account.equity
+        risk = size * proposal.risk_distance / equity if equity > 0 else 0.0
+        if risk < min_risk:
+            return Decision(
+                kind=DecisionKind.VETO,
+                reason="max_leverage",
+                risk_frac=risk,
+                anomaly=a,
+                p_adj=p_adj,
+                p_be=p_be,
+                p_cal=p_cal,
+                anomaly_breakdown=breakdown if use_anomaly else None,
+                gate_config=gate_config,
+            )
+
     kind = DecisionKind.APPROVE if risk >= base_risk else DecisionKind.SHRINK
     return Decision(
         kind=kind,

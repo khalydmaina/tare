@@ -5,7 +5,7 @@ llm:
   temperature: 0.2
   max_retries: 2
   ablation_probe: true   # M2: re-ask with sentiment stripped (G2 only)
-  prompt_version: "trader_v1"
+  prompt_version: "trader_v2"   # trader/prompts/<version>.txt; v2 fixes SL/TP to the SMC setup
 
 market:
   symbols: [BTCUSDT, ETHUSDT, SOLUSDT]
