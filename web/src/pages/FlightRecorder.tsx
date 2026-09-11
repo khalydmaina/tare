@@ -15,12 +15,33 @@ import {
 } from 'recharts'
 import { ScaleDial } from '../components/ScaleDial'
 import { EquityChart } from '../components/EquityChart'
-import { BUCKET_GAPS, DECISIONS, EQUITY, METRICS, RELIABILITY, STATUS } from '../data/demo'
+import { BUCKET_GAPS, DECISIONS, EQUITY, METRICS, RELIABILITY } from '../data/demo'
+import { agoLabel, isFresh, useLive, type LiveDecision } from '../data/live'
 import { GATES, pct, sourceLabel, useResults } from '../data/results'
 
 type Tab = 'live' | 'attacks' | 'results'
 const TABS: readonly Tab[] = ['live', 'attacks', 'results']
 const BRAND = `${import.meta.env.BASE_URL}brand`
+
+const fmt = (x: number | null | undefined, digits = 2) =>
+  x === null || x === undefined ? '-' : x.toFixed(digits)
+
+/** Each stage of the live funnel, in the order a candle moves through the bot */
+const FUNNEL = [
+  ['cycles', 'coin checks'],
+  ['setups', 'setups found'],
+  ['proposals', 'asked the AI'],
+  ['takes', 'AI wanted in'],
+  ['vetoes', 'vetoed'],
+  ['orders', 'orders placed'],
+] as const
+
+/** 1h ATR% tercile against the coin's own last 30 days */
+const REGIME: Record<string, { label: string; tone: string }> = {
+  low: { label: 'calm', tone: 'border-line text-mute' },
+  mid: { label: 'normal', tone: 'border-line-strong text-ink' },
+  high: { label: 'volatile', tone: 'border-white/60 text-white' },
+}
 
 export function FlightRecorder() {
   // The tab lives in the URL (?tab=attacks), so landing-page links and refreshes land on it
@@ -34,9 +55,21 @@ export function FlightRecorder() {
   const scenario = pickedScenario ?? results.scenarios[0] ?? ''
   const attack =
     pickedAttack ?? (results.attacks.includes('A4') ? 'A4' : (results.attacks[0] ?? 'clean'))
-  const latest = DECISIONS[0]
+
+  // Real bot data when the paper-log feed exists; labelled demo data otherwise
+  const live = useLive()
+  const fresh = live ? isFresh(live) : false
+  const isDemo = live === null
+  const metrics = live?.metrics ?? METRICS
+  const equity = live?.equity ?? EQUITY
+  const decisions: LiveDecision[] = live?.decisions ?? DECISIONS
+  const buckets = live?.buckets ?? BUCKET_GAPS
+  const reliability = live?.reliability ?? RELIABILITY
+  const latest = decisions[0]
   const veto = latest?.kind === 'veto'
-  const isDemo = STATUS.status === 'demo'
+  const dialDecision = decisions.find((d) => d.p_cal !== null && d.p_cal !== undefined)
+  const status = isDemo ? 'demo' : fresh ? 'live' : 'stale'
+  const badge = isDemo ? 'Demo' : fresh ? 'Live' : 'Stale'
 
   const gateCols = useMemo(
     () =>
@@ -89,11 +122,20 @@ export function FlightRecorder() {
       </header>
 
       <main className="mx-auto max-w-[1440px] px-3 py-4 md:px-5 md:py-6">
-        {isDemo ? (
-          <p className="mb-2 text-[11px] uppercase tracking-wide text-mute">
-            Demo account · the live paper bot is not connected to this page yet
-          </p>
-        ) : null}
+        <p className="mb-2 flex flex-wrap items-center gap-2 text-[11px] uppercase tracking-wide text-mute">
+          {live ? (
+            <>
+              <span
+                className={`inline-block h-1.5 w-1.5 rounded-full ${fresh ? 'bg-guarded' : 'bg-danger'}`}
+                aria-hidden
+              />
+              Live paper account · {live.symbols} coins · last cycle {agoLabel(live.status.updated_at)}
+              {fresh ? '' : ' · no cycle for a while, the bot may be stalled'}
+            </>
+          ) : (
+            'Demo account · the live paper bot is not connected to this page yet'
+          )}
+        </p>
 
         {/* Status strip */}
         <div className="mb-4 grid grid-cols-2 gap-2 md:grid-cols-4 md:gap-3">
@@ -102,14 +144,14 @@ export function FlightRecorder() {
             value={
               <span
                 className={`inline-block rounded-[4px] border px-2 py-0.5 tabular text-xs uppercase tracking-wide ${
-                  STATUS.status === 'running'
+                  status === 'live'
                     ? 'border-guarded text-guarded'
-                    : isDemo
+                    : status === 'demo'
                       ? 'border-line-strong text-mute'
                       : 'border-danger text-danger'
                 }`}
               >
-                {STATUS.status}
+                {status}
               </span>
             }
           />
@@ -117,7 +159,7 @@ export function FlightRecorder() {
             label="Equity (guarded)"
             value={
               <span className="tabular text-xl text-guarded">
-                {METRICS.equityGuarded.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+                {metrics.equityGuarded.toLocaleString(undefined, { maximumFractionDigits: 0 })}
               </span>
             }
           />
@@ -125,7 +167,7 @@ export function FlightRecorder() {
             label="Equity (shadow)"
             value={
               <span className="tabular text-xl text-danger">
-                {METRICS.equityShadow.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+                {metrics.equityShadow.toLocaleString(undefined, { maximumFractionDigits: 0 })}
               </span>
             }
           />
@@ -133,8 +175,8 @@ export function FlightRecorder() {
             label="Open / day P&L"
             value={
               <span className="tabular text-xl text-white">
-                {METRICS.openPositions} · {METRICS.dayPnl >= 0 ? '+' : ''}
-                {METRICS.dayPnl.toFixed(0)}
+                {metrics.openPositions} · {metrics.dayPnl >= 0 ? '+' : ''}
+                {metrics.dayPnl.toFixed(0)}
               </span>
             }
           />
@@ -145,8 +187,9 @@ export function FlightRecorder() {
             <span className="font-medium text-white">VETO</span>
             <span className="text-ink/90">
               {' '}
-              - {latest.reason} · p_adj {latest.p_adj} {'<'} breakeven {latest.p_be} · anomaly{' '}
-              {latest.anomaly}
+              - {latest.symbol.replace('USDT', '')} · {latest.reason}
+              {latest.p_adj !== null ? ` · p_adj ${fmt(latest.p_adj)} < breakeven ${fmt(latest.p_be)}` : ''}
+              {' '}· anomaly {fmt(latest.anomaly)}
               {latest.checks.length ? ` · ${latest.checks.join(', ')}` : ''}
             </span>
             {isDemo ? (
@@ -159,115 +202,196 @@ export function FlightRecorder() {
 
         {tab === 'live' ? (
           <div className="grid grid-cols-1 gap-3 lg:grid-cols-12">
-            <Panel className="lg:col-span-4" title="Overconfidence dial" badge={isDemo ? 'Demo' : undefined}>
-              <div className="flex justify-center py-2">
-                <ScaleDial
-                  stated={latest?.confidence ?? METRICS.stated}
-                  calibrated={Math.round((latest?.p_cal ?? 0.41) * 100)}
-                  size={260}
-                />
-              </div>
+            {live ? (
+              <Panel className="lg:col-span-12" title="What the bot has done" badge={badge}>
+                <ol className="mb-4 flex flex-wrap items-baseline gap-x-3 gap-y-2 text-sm">
+                  {FUNNEL.map(([key, label], i) => (
+                    <li key={key} className="flex items-baseline gap-2">
+                      {i ? (
+                        <span className="text-line-strong" aria-hidden>
+                          →
+                        </span>
+                      ) : null}
+                      <span className="tabular text-lg text-white">{live.counts[key] ?? '-'}</span>
+                      <span className="text-mute">{label}</span>
+                    </li>
+                  ))}
+                </ol>
+                {live.scan?.length ? (
+                  <>
+                    <p className="mb-2 text-[11px] uppercase tracking-wide text-mute">Last check of each coin</p>
+                    <ul className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5">
+                      {live.scan.map((s) => {
+                        const regime = REGIME[s.regime] ?? { label: s.regime, tone: 'border-line text-mute' }
+                        return (
+                          <li key={s.symbol} className="rounded-[4px] border border-line px-3 py-2">
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="text-sm text-white">{s.symbol.replace('USDT', '')}</span>
+                              <span
+                                className={`rounded-[4px] border px-1.5 py-0.5 text-[10px] uppercase tracking-wide ${regime.tone}`}
+                                title="Volatility: 1h ATR% against this coin's own last 30 days"
+                              >
+                                {regime.label}
+                              </span>
+                            </div>
+                            <div className="mt-1 text-xs text-mute">
+                              {s.setups ? `${s.setups} setup${s.setups > 1 ? 's' : ''}` : 'no setup'} ·{' '}
+                              {agoLabel(s.ts)}
+                            </div>
+                          </li>
+                        )
+                      })}
+                    </ul>
+                  </>
+                ) : null}
+                {live.bot ? (
+                  <p className="mt-3 text-xs text-mute">
+                    AI {live.bot.model || 'unknown'} · gate {live.bot.gate || '-'} · {live.bot.fills}
+                    {live.bot.health ? ` · ${live.bot.health.replace(/^last cycle [^:]+: /, 'last cycle: ')}` : ''}
+                  </p>
+                ) : null}
+              </Panel>
+            ) : null}
+
+            <Panel className="lg:col-span-4" title="Overconfidence dial" badge={badge}>
+              {dialDecision ? (
+                <div className="flex justify-center py-2">
+                  <ScaleDial
+                    stated={dialDecision.confidence}
+                    calibrated={Math.round((dialDecision.p_cal ?? 0) * 100)}
+                    size={260}
+                    label={isDemo ? undefined : `Latest weighed proposal: ${dialDecision.symbol.replace('USDT', '')}`}
+                  />
+                </div>
+              ) : (
+                <Empty>No proposal weighed yet. The dial shows the AI's claim against its record once one is.</Empty>
+              )}
               <div className="mt-2 h-36">
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={BUCKET_GAPS}>
-                    <CartesianGrid stroke="#222" vertical={false} />
-                    <XAxis dataKey="bucket" tick={{ fill: '#A3A3A3', fontSize: 10 }} stroke="#333" />
-                    <YAxis tick={{ fill: '#A3A3A3', fontSize: 10 }} stroke="#333" width={28} />
-                    <Tooltip
-                      contentStyle={{ background: '#111', border: '1px solid #333', borderRadius: 4 }}
-                    />
-                    <Bar dataKey="gap" name="Stated - hit rate" fill="#FFFFFF" radius={[2, 2, 0, 0]} />
-                  </BarChart>
-                </ResponsiveContainer>
+                {buckets.length ? (
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={buckets}>
+                      <CartesianGrid stroke="#222" vertical={false} />
+                      <XAxis dataKey="bucket" tick={{ fill: '#A3A3A3', fontSize: 10 }} stroke="#333" />
+                      <YAxis tick={{ fill: '#A3A3A3', fontSize: 10 }} stroke="#333" width={28} />
+                      <Tooltip
+                        contentStyle={{ background: '#111', border: '1px solid #333', borderRadius: 4 }}
+                      />
+                      <Bar dataKey="gap" name="Stated - hit rate" fill="#FFFFFF" radius={[2, 2, 0, 0]} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                ) : (
+                  <Empty>The overconfidence gap fills in as trades close.</Empty>
+                )}
               </div>
               <p className="mt-2 text-xs text-mute">Bucket overconfidence gap (pts)</p>
             </Panel>
 
-            <Panel className="lg:col-span-8" title="Equity: guarded vs shadow" badge={isDemo ? 'Demo' : undefined}>
-              <p className="mb-2 text-[11px] uppercase tracking-wide text-mute">Illustrative demo curve · live paper results replace this</p>
-              <EquityChart data={EQUITY} height={300} />
+            <Panel className="lg:col-span-8" title="Equity: guarded vs shadow" badge={badge}>
+              <p className="mb-2 text-[11px] uppercase tracking-wide text-mute">
+                {isDemo
+                  ? 'Illustrative demo curve · live paper results replace this'
+                  : `Marked after every 15-minute cycle · ${live?.counts.cycles ?? 0} coin checks so far`}
+              </p>
+              {equity.length >= 2 ? (
+                <EquityChart data={equity} height={300} />
+              ) : (
+                <Empty>The curve starts after the second cycle.</Empty>
+              )}
             </Panel>
 
-            <Panel className="lg:col-span-5" title="Reliability diagram" badge={isDemo ? 'Demo' : undefined}>
+            <Panel className="lg:col-span-5" title="Reliability diagram" badge={badge}>
               <div className="h-64">
-                <ResponsiveContainer width="100%" height="100%">
-                  <ComposedChart margin={{ top: 8, right: 8, bottom: 8, left: 0 }}>
-                    <CartesianGrid stroke="#222" />
-                    <XAxis
-                      type="number"
-                      dataKey="stated"
-                      name="Stated"
-                      domain={[45, 105]}
-                      tick={{ fill: '#A3A3A3', fontSize: 11 }}
-                      stroke="#333"
-                    />
-                    <YAxis
-                      type="number"
-                      dataKey="actual"
-                      name="Actual"
-                      domain={[0, 100]}
-                      tick={{ fill: '#A3A3A3', fontSize: 11 }}
-                      stroke="#333"
-                      width={36}
-                    />
-                    <ZAxis type="number" dataKey="n" range={[60, 280]} />
-                    <Tooltip
-                      cursor={{ strokeDasharray: '3 3' }}
-                      contentStyle={{ background: '#111', border: '1px solid #333', borderRadius: 4 }}
-                    />
-                    <Line
-                      data={[
-                        { stated: 50, actual: 50 },
-                        { stated: 100, actual: 100 },
-                      ]}
-                      dataKey="actual"
-                      stroke="#666"
-                      strokeDasharray="4 4"
-                      dot={false}
-                      activeDot={false}
-                      legendType="none"
-                      isAnimationActive={false}
-                    />
-                    <Scatter data={RELIABILITY} fill="#FFFFFF" />
-                  </ComposedChart>
-                </ResponsiveContainer>
+                {reliability.length ? (
+                  <ResponsiveContainer width="100%" height="100%">
+                    <ComposedChart margin={{ top: 8, right: 8, bottom: 8, left: 0 }}>
+                      <CartesianGrid stroke="#222" />
+                      <XAxis
+                        type="number"
+                        dataKey="stated"
+                        name="Stated"
+                        domain={[45, 105]}
+                        tick={{ fill: '#A3A3A3', fontSize: 11 }}
+                        stroke="#333"
+                      />
+                      <YAxis
+                        type="number"
+                        dataKey="actual"
+                        name="Actual"
+                        domain={[0, 100]}
+                        tick={{ fill: '#A3A3A3', fontSize: 11 }}
+                        stroke="#333"
+                        width={36}
+                      />
+                      <ZAxis type="number" dataKey="n" range={[60, 280]} />
+                      <Tooltip
+                        cursor={{ strokeDasharray: '3 3' }}
+                        contentStyle={{ background: '#111', border: '1px solid #333', borderRadius: 4 }}
+                      />
+                      <Line
+                        data={[
+                          { stated: 50, actual: 50 },
+                          { stated: 100, actual: 100 },
+                        ]}
+                        dataKey="actual"
+                        stroke="#666"
+                        strokeDasharray="4 4"
+                        dot={false}
+                        activeDot={false}
+                        legendType="none"
+                        isAnimationActive={false}
+                      />
+                      <Scatter data={reliability} fill="#FFFFFF" />
+                    </ComposedChart>
+                  </ResponsiveContainer>
+                ) : (
+                  <Empty>Stated confidence against actual hit rate appears once trades close.</Empty>
+                )}
               </div>
             </Panel>
 
-            <Panel className="lg:col-span-7" title="Decision log" badge={isDemo ? 'Demo' : undefined}>
-              <div className="overflow-x-auto">
-                <table className="w-full min-w-[640px] text-left text-sm">
-                  <thead className="text-mute">
-                    <tr>
-                      <th className="pb-2 font-medium">Time</th>
-                      <th className="pb-2 font-medium">Sym</th>
-                      <th className="pb-2 font-medium">Conf</th>
-                      <th className="pb-2 font-medium">Decision</th>
-                      <th className="pb-2 font-medium">Reason</th>
-                      <th className="pb-2 font-medium">Anom</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {DECISIONS.map((d) => (
-                      <tr key={d.id} className="border-t border-line/80">
-                        <td className="tabular py-2.5 text-mute">
-                          {new Date(d.ts).toLocaleTimeString([], {
-                            hour: '2-digit',
-                            minute: '2-digit',
-                          })}
-                        </td>
-                        <td className="py-2.5">{d.symbol.replace('USDT', '')}</td>
-                        <td className="tabular py-2.5">{d.confidence}</td>
-                        <td className="py-2.5">
-                          <KindPill kind={d.kind} />
-                        </td>
-                        <td className="py-2.5 text-mute">{d.reason}</td>
-                        <td className="tabular py-2.5">{d.anomaly.toFixed(2)}</td>
+            <Panel className="lg:col-span-7" title="Decision log" badge={badge}>
+              {decisions.length ? (
+                <div className="overflow-x-auto">
+                  <table className="w-full min-w-[640px] text-left text-sm">
+                    <thead className="text-mute">
+                      <tr>
+                        <th className="pb-2 font-medium">Time</th>
+                        <th className="pb-2 font-medium">Coin</th>
+                        <th className="pb-2 font-medium">Conf</th>
+                        <th className="pb-2 font-medium">Decision</th>
+                        <th className="pb-2 font-medium">Reason</th>
+                        <th className="pb-2 font-medium">Anom</th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+                    </thead>
+                    <tbody>
+                      {decisions.map((d) => (
+                        <tr key={d.id} className="border-t border-line/80">
+                          <td className="tabular py-2.5 text-mute">
+                            {new Date(d.ts).toLocaleString([], {
+                              month: 'short',
+                              day: 'numeric',
+                              hour: '2-digit',
+                              minute: '2-digit',
+                            })}
+                          </td>
+                          <td className="py-2.5">{d.symbol.replace('USDT', '')}</td>
+                          <td className="tabular py-2.5">{d.confidence}</td>
+                          <td className="py-2.5">
+                            <KindPill kind={d.kind} />
+                          </td>
+                          <td className="py-2.5 text-mute">{d.reason}</td>
+                          <td className="tabular py-2.5">{fmt(d.anomaly)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <Empty>
+                  No setups yet. The bot checks {live?.symbols ?? 10} coins every 15 minutes and most checks find
+                  nothing worth asking the AI about.
+                </Empty>
+              )}
             </Panel>
           </div>
         ) : null}
@@ -429,6 +553,10 @@ function Panel({
       {children}
     </section>
   )
+}
+
+function Empty({ children }: { children: React.ReactNode }) {
+  return <p className="flex min-h-24 items-center justify-center px-4 py-6 text-center text-sm text-mute">{children}</p>
 }
 
 function Metric({ label, value }: { label: string; value: React.ReactNode }) {

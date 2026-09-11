@@ -1,16 +1,21 @@
 #!/usr/bin/env python3
-"""Write the paper trading log judges read: paper_log/*.csv plus paper_log/README.md.
+"""Write the paper trading log judges read and the live feed the website reads.
 
-Everything comes from the Flight Recorder the live bot writes (TARE_DB), so this log,
-the dashboard and docs/RESULTS.md never disagree.
+paper_log/*.csv + paper_log/README.md for judges, paper_log/live.json for the Flight
+Recorder. Everything comes from the Flight Recorder database the live bot writes
+(TARE_DB), so the log, the website, the dashboard and docs/RESULTS.md never disagree.
 
     python scripts/export_paper_log.py
+    TARE_DB=/tmp/tare.db python scripts/export_paper_log.py --out /tmp/log --state /tmp/live_state.json
 """
 
 from __future__ import annotations
 
+import argparse
 import csv
+import json
 import math
+import re
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -25,6 +30,8 @@ from core.config import db_path  # noqa: E402
 from recorder.db import FlightRecorder  # noqa: E402
 
 OUT = ROOT / "paper_log"
+STATE = ROOT / "data" / "live_state.json"
+MAX_EQUITY_POINTS = 400
 
 TABLES = {
     "decisions.csv": """
@@ -57,6 +64,24 @@ TABLES = {
     "equity.csv": "SELECT ts, book, equity FROM equity ORDER BY id",
 }
 
+RECENT_DECISIONS = """
+    SELECT d.id, c.ts, c.symbol, p.side, p.action, p.confidence, d.kind, d.reason,
+           d.p_cal, d.p_adj, d.p_be, d.anomaly, d.anomaly_breakdown_json
+    FROM decisions d
+    JOIN proposals p ON p.id = d.proposal_id
+    JOIN setups s ON s.id = p.setup_id
+    JOIN cycles c ON c.id = s.cycle_id
+    ORDER BY d.id DESC LIMIT 50"""
+
+# The newest check of every coin: when, which volatility regime, how many setups it found
+LAST_SCAN = """
+    SELECT c.symbol, c.ts, c.regime, COUNT(s.id) AS setups
+    FROM cycles c
+    LEFT JOIN setups s ON s.cycle_id = c.id
+    WHERE c.id IN (SELECT MAX(id) FROM cycles GROUP BY symbol)
+    GROUP BY c.id
+    ORDER BY c.id"""
+
 
 def metrics(equity: list[float]) -> dict[str, float]:
     if len(equity) < 2:
@@ -73,12 +98,64 @@ def metrics(equity: list[float]) -> dict[str, float]:
     return {"ret": equity[-1] / equity[0] - 1, "mdd": mdd, "sharpe": sharpe}
 
 
+def checks_fired(raw: str | None) -> list[str]:
+    if not raw:
+        return []
+    try:
+        breakdown = json.loads(raw)
+    except ValueError:
+        return []
+    fired = list(breakdown.get("hard_triggers") or [])
+    fired += [k for k, v in (breakdown.get("soft") or {}).items() if v >= 0.5 and k not in fired]
+    return fired
+
+
+def bot_info(note: str) -> dict[str, str]:
+    """Split the status note run_live.py writes: 'gate=G2 llm=model fills | last cycle ...'."""
+    config, _, health = note.partition(" | ")
+    model = re.search(r"llm=(\S+)", config)
+    gate = re.search(r"gate=(\S+)", config)
+    return {
+        "model": model.group(1) if model else ("simulated trader" if "SIMULATED" in config else ""),
+        "gate": gate.group(1) if gate else "",
+        "fills": "Bitget demo account" if "bitget-demo-api" in config else "local simulated fills",
+        "health": health,
+    }
+
+
+def calibration_by_bucket(rec: FlightRecorder) -> tuple[list[dict], list[dict]]:
+    """Latest snapshot per cell, pooled across regimes: overconfidence gap and reliability."""
+    pooled: dict[str, list[int]] = {}
+    for cell in rec.fetch_calibration():
+        bucket = cell["cell"].split("|")[0]
+        totals = pooled.setdefault(bucket, [0, 0])
+        totals[0] += cell["n"] or 0
+        totals[1] += cell["wins"] or 0
+    gaps, reliability = [], []
+    for bucket, (n, wins) in sorted(pooled.items(), key=lambda kv: int(kv[0].split("-")[0])):
+        if not n:
+            continue
+        lo, hi = (int(x) for x in bucket.split("-"))
+        mid, hit = (lo + hi) / 2, 100 * wins / n
+        gaps.append({"bucket": bucket, "gap": round(mid - hit, 1), "n": n})
+        reliability.append({"stated": mid, "actual": round(hit, 1), "n": n})
+    return gaps, reliability
+
+
 def main() -> None:
+    parser = argparse.ArgumentParser(description="Export the paper trading log and live.json")
+    parser.add_argument("--out", type=Path, default=OUT, help="output directory (default: paper_log/)")
+    parser.add_argument("--state", type=Path, default=STATE,
+                        help="live loop state file, read for open positions (default: data/live_state.json)")
+    args = parser.parse_args()
+    out, state = args.out, args.state
+
     db = db_path()
-    OUT.mkdir(parents=True, exist_ok=True)
-    now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    out.mkdir(parents=True, exist_ok=True)
+    now = datetime.now(timezone.utc)
+    stamp = now.strftime("%Y-%m-%d %H:%M UTC")
     if not db.exists():
-        (OUT / "README.md").write_text(f"# tare paper trading log\n\nNo live data yet ({now}).\n", encoding="utf-8")
+        (out / "README.md").write_text(f"# tare paper trading log\n\nNo live data yet ({stamp}).\n", encoding="utf-8")
         print(f"no database at {db}; wrote an empty log")
         return
 
@@ -86,30 +163,47 @@ def main() -> None:
     with rec.conn() as c:
         for name, query in TABLES.items():
             cur = c.execute(query)
-            with (OUT / name).open("w", newline="", encoding="utf-8") as fh:
+            with (out / name).open("w", newline="", encoding="utf-8") as fh:
                 writer = csv.writer(fh)
                 writer.writerow([col[0] for col in cur.description])
                 writer.writerows(cur.fetchall())
         count = lambda q: c.execute(q).fetchone()[0]  # noqa: E731
         counts = {
             "cycles": count("SELECT COUNT(*) FROM cycles"),
+            "setups": count("SELECT COUNT(*) FROM setups"),
             "proposals": count("SELECT COUNT(*) FROM proposals"),
             "takes": count("SELECT COUNT(*) FROM proposals WHERE action = 'take'"),
             "vetoes": count("SELECT COUNT(*) FROM decisions WHERE kind = 'veto'"),
             "orders": count("SELECT COUNT(*) FROM orders"),
         }
-        first_cycle = c.execute("SELECT MIN(ts) FROM cycles").fetchone()[0] or "-"
+        first_cycle = c.execute("SELECT MIN(ts) FROM cycles").fetchone()[0]
+        symbols = count("SELECT COUNT(DISTINCT symbol) FROM cycles")
         models = [r[0] for r in c.execute("SELECT DISTINCT prompt_version FROM proposals")]
+        recent = [
+            {
+                "id": r["id"], "ts": r["ts"], "symbol": r["symbol"], "side": r["side"],
+                "action": r["action"], "confidence": r["confidence"], "kind": r["kind"],
+                "reason": r["reason"], "p_cal": r["p_cal"], "p_adj": r["p_adj"], "p_be": r["p_be"],
+                "anomaly": r["anomaly"], "checks": checks_fired(r["anomaly_breakdown_json"]),
+            }
+            for r in c.execute(RECENT_DECISIONS).fetchall()
+        ]
+        scan = [
+            {"symbol": r["symbol"], "ts": r["ts"], "regime": r["regime"], "setups": r["setups"]}
+            for r in c.execute(LAST_SCAN).fetchall()
+        ]
 
     status = rec.get_status()
-    rows = []
-    for label, book, ref_type in (
-        ("Guarded (Inspector sizes or vetoes)", "guarded", "real"),
-        ("Shadow (every take, no Inspector)", "shadow", "shadow"),
+    guarded, shadow = rec.fetch_equity("guarded"), rec.fetch_equity("shadow")
+    books, rows = {}, []
+    for label, book, ref_type, marks in (
+        ("Guarded (Inspector sizes or vetoes)", "guarded", "real", guarded),
+        ("Shadow (every take, no Inspector)", "shadow", "shadow", shadow),
     ):
-        m = metrics([e["equity"] for e in rec.fetch_equity(book)])
+        m = metrics([e["equity"] for e in marks])
         outcomes = rec.fetch_outcomes(ref_type)
         wins = sum(1 for o in outcomes if o["result"] == "win")
+        books[book] = {**m, "closed": len(outcomes), "win_rate": wins / len(outcomes) if outcomes else None}
         win_rate = f"{100 * wins / len(outcomes):.0f}%" if outcomes else "-"
         rows.append(f"| {label} | {100 * m['ret']:+.2f}% | {100 * m['mdd']:.2f}% | "
                     f"{m['sharpe']:.2f} | {len(outcomes)} | {win_rate} |")
@@ -117,25 +211,63 @@ def main() -> None:
     lines = [
         "# tare paper trading log",
         "",
-        f"Generated {now} by `scripts/export_paper_log.py` from the live bot's Flight Recorder.",
+        f"Generated {stamp} by `scripts/export_paper_log.py` from the live bot's Flight Recorder.",
         "",
         f"- Bot status: `{status.get('status')}` · {status.get('note') or '-'}",
-        f"- Running since: {first_cycle}",
+        f"- Running since: {first_cycle or '-'}",
         f"- Prompt versions: {', '.join(m for m in models if m) or '-'}",
         "",
         "| Book | Return | Max drawdown | Sharpe (annualised, 15m marks) | Closed trades | Win rate |",
         "|---|---|---|---|---|---|",
         *rows,
         "",
-        f"Cycles {counts['cycles']} · AI proposals {counts['proposals']} · takes {counts['takes']} · "
-        f"vetoes {counts['vetoes']} · orders {counts['orders']}",
+        f"Cycles {counts['cycles']} · setups {counts['setups']} · AI proposals {counts['proposals']} · "
+        f"takes {counts['takes']} · vetoes {counts['vetoes']} · orders {counts['orders']}",
         "",
         "Files: `decisions.csv` (every AI proposal and the Inspector's verdict), `trades.csv` "
         "(guarded orders and outcomes), `shadow_trades.csv` (every take, unguarded), `equity.csv`.",
         "",
     ]
-    (OUT / "README.md").write_text("\n".join(lines), encoding="utf-8")
-    print(f"wrote {OUT}")
+    (out / "README.md").write_text("\n".join(lines), encoding="utf-8")
+
+    # ---- live.json for the website ----
+    equity = [
+        {"t": g["ts"], "guarded": round(g["equity"], 2), "shadow": round(s["equity"], 2)}
+        for g, s in zip(guarded, shadow)
+    ]
+    if len(equity) > MAX_EQUITY_POINTS:
+        step = len(equity) // MAX_EQUITY_POINTS + 1
+        equity = equity[::step] + [equity[-1]]
+    today = now.date().isoformat()
+    day_start = next((g["equity"] for g in guarded if g["ts"][:10] == today), None)
+    last_guarded = guarded[-1]["equity"] if guarded else 10_000.0
+    open_positions = 0
+    if state.exists():
+        open_positions = len(json.loads(state.read_text(encoding="utf-8")).get("broker", {}).get("positions", []))
+    gaps, reliability = calibration_by_bucket(rec)
+    note = status.get("note") or ""
+    live = {
+        "generated_at": now.isoformat(),
+        "status": {"status": status.get("status"), "note": note, "updated_at": status.get("updated_at")},
+        "bot": bot_info(note),
+        "running_since": first_cycle,
+        "symbols": symbols,
+        "metrics": {
+            "equityGuarded": round(last_guarded, 2),
+            "equityShadow": round(shadow[-1]["equity"], 2) if shadow else 10_000.0,
+            "dayPnl": round(last_guarded - day_start, 2) if day_start is not None else 0.0,
+            "openPositions": open_positions,
+        },
+        "books": books,
+        "counts": counts,
+        "scan": scan,
+        "equity": equity,
+        "decisions": recent,
+        "buckets": gaps,
+        "reliability": reliability,
+    }
+    (out / "live.json").write_text(json.dumps(live, default=str), encoding="utf-8")
+    print(f"wrote {out}")
 
 
 if __name__ == "__main__":
