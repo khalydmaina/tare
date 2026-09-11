@@ -121,6 +121,8 @@ def test_trades_close_record_outcomes_and_keep_trading(live):
     assert len(ns.broker.account.positions) == 1 and len(ns.shadow.open_positions) == 1
     assert ns.seen[-1].close_time <= ns.t0 + timedelta(seconds=1)  # forming bar never reaches SMC
     assert ns.rec.fetch_outcomes() == []
+    # The dashboard's decision log query (it used to select a column that does not exist)
+    assert ns.rec.fetch_recent_decisions(5)[0]["symbol"] == SYMBOL
 
     cal_n = sum(c.n for c in ns.cal.cells.values())
     _load_feeds(ns, last_open=ns.t0 + timedelta(minutes=30), tp_bar=ns.t0, price_now=101.0)

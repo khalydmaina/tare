@@ -369,7 +369,7 @@ class FlightRecorder:
     def fetch_recent_decisions(self, limit: int = 50) -> list[dict[str, Any]]:
         q = """
         SELECT d.*, p.confidence, p.action, p.rationale, p.side, p.entry, p.sl, p.tp,
-               s.symbol, c.ts AS cycle_ts
+               c.symbol, c.ts AS cycle_ts
         FROM decisions d
         JOIN proposals p ON p.id = d.proposal_id
         JOIN setups s ON s.id = p.setup_id
