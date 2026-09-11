@@ -11,7 +11,7 @@ market:
   symbols: [BTCUSDT, ETHUSDT, SOLUSDT]
   entry_tf: 15m
   bias_tfs: [1h, 4h]
-  reference_venue: "binance"
+  reference_venue: "okx"   # second venue for C1 (okx | binance | bybit); Binance and Bybit refuse US-hosted servers
   candle_limit: 200
   sentiment_lookback_hours: 6
   stale_intervals: 2

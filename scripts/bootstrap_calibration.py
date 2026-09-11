@@ -39,7 +39,7 @@ def main() -> None:
     blind = not args.no_blind
 
     cfg = ConfigBundle()
-    feed = ReferenceFeed(cfg.settings["market"].get("reference_venue", "binance"))
+    feed = ReferenceFeed(cfg.settings["market"].get("reference_venue", "okx"))
     log.info("fetching %s candles…", args.symbol)
     c15 = feed.fetch_klines(args.symbol, "15m", min(args.limit, 1500))
     c1h = feed.fetch_klines(args.symbol, "1h", min(args.limit // 4 + 50, 1000))

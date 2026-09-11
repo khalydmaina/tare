@@ -1,8 +1,8 @@
 name: Market data check
 
 # Manual job for when the local network cannot reach the exchanges. From a GitHub runner it
-# checks Bitget / Binance / Bybit, runs one live-loop cycle on real candles with the simulated
-# trader (no keys, no orders), and can build a real scenario bank as a downloadable artifact.
+# checks the exchanges, runs one live-loop cycle on real candles with the simulated trader
+# (no keys, no orders), and can build a real scenario bank plus a cross-venue basis check.
 on:
   workflow_dispatch:
     inputs:
@@ -17,6 +17,8 @@ jobs:
   check:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    env:
+      SCENARIO_DAYS: ${{ inputs.scenario_days }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -27,8 +29,8 @@ jobs:
 
       - name: Exchange reachability
         run: |
-          # Trader feed (Bitget), current reference venues (Binance, Bybit), and candidates
-          # for a reference venue that also answers from US-hosted runners.
+          # Trader feed (Bitget), supported reference venues (OKX, Binance, Bybit), and other
+          # candidates for a reference venue that also answers from US-hosted runners.
           check() {
             code=$(curl -s -o /tmp/body -w "%{http_code}" --max-time 20 "$@" || echo "000")
             printf '%-18s %s  %s\n' "$NAME" "$code" "$(head -c 90 /tmp/body 2>/dev/null | tr -d '\n')"
@@ -60,9 +62,13 @@ jobs:
           print("regimes:", db.execute("select symbol, regime from cycles").fetchall())
           EOF
 
+      - name: Cross-venue basis (sets C1's threshold)
+        if: ${{ inputs.scenario_days != '0' }}
+        run: python scripts/measure_basis.py --days 30
+
       - name: Build scenario bank
         if: ${{ inputs.scenario_days != '0' }}
-        run: python scripts/build_scenarios.py --days "${{ inputs.scenario_days }}"
+        run: python scripts/build_scenarios.py --days "$SCENARIO_DAYS"
 
       - name: Upload scenario bank
         if: ${{ inputs.scenario_days != '0' }}

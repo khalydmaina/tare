@@ -30,7 +30,7 @@ The Trader only chooses take/skip and a confidence. Stop-loss and take-profit al
 ```text
 Trader feed (Bitget) + sentiment → SMC → LLM proposal
                                       ↓
-Reference feed (Binance) --------→ INSPECTOR → approve/shrink/veto
+Reference feed (OKX) ------------→ INSPECTOR → approve/shrink/veto
                                       ↓
                          Bitget paper + Shadow book → Flight Recorder → Dashboard
 ```
@@ -43,7 +43,7 @@ python3 -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
 cp .env.example .env   # XAI_API_KEY; BITGET_* optional (without them fills are simulated)
 
-pytest                                         # 47 tests
+pytest                                         # all tests
 python scripts/run_attacks.py --llm sim        # offline plumbing check (NOT evidence)
 python scripts/run_live.py --once --mock-llm   # one live-loop cycle, simulated trader, writes to data/mock/
 
@@ -53,11 +53,15 @@ cd web && npm install && npm run dev           # http://localhost:5173 and /app
 ## Producing the real numbers
 
 ```bash
-# 1. Real scenario bank: Bitget futures candles + Binance reference, SMC walk-forward,
+# 1. Real scenario bank: Bitget futures candles + OKX reference, SMC walk-forward,
 #    every setup labelled with what actually happened next. No LLM cost.
 python scripts/build_scenarios.py --days 45 --symbols BTCUSDT,ETHUSDT,SOLUSDT
+#    Exchanges blocked on your network? Run it on GitHub instead:
+#    Actions → Market data check → Run workflow (scenario_days 45), then
+#    gh run download <run-id> --name scenarios --dir data
 
 # 2. Check C1's cross-venue threshold against real basis before trusting it
+#    (the Market data check workflow runs this too)
 python scripts/measure_basis.py --days 30
 
 # 3. Attack evaluation with the real Trader model (candles blinded before the prompt).
@@ -90,7 +94,7 @@ Hard limits from `config/limits.yaml`: 2 concurrent positions, 1 per symbol, 3x 
 
 Until a calibration bucket has 20 outcomes, lookups fall back to `prior_p` (0.35). With the 3-point edge margin that only clears setups of about 2.1R or more, so the guarded book stays very selective until step 3 or live shadow outcomes fill the matrix. That is deliberate.
 
-The loop needs outbound HTTPS to `api.bitget.com` and `fapi.binance.com` (or set `market.reference_venue: bybit`). A symbol whose feed fails is skipped for that cycle and never traded on made-up candles.
+The loop needs outbound HTTPS to `api.bitget.com` and `www.okx.com`. OKX is the default second venue because Binance and Bybit refuse US-hosted servers; `market.reference_venue` also accepts `binance` or `bybit` where they answer. A symbol whose feed fails is skipped for that cycle and never traded on made-up candles.
 
 `TARE_DB` (default `data/tare.db`) is the one database shared by the live loop, attack harness, exporter and dashboard.
 
@@ -116,7 +120,8 @@ The loop needs outbound HTTPS to `api.bitget.com` and `fapi.binance.com` (or set
 
 ## GitHub
 
-GitHub Pages (landing + Flight Recorder) deploys from `.github/workflows/pages.yml` on push to `master`; the workflow type-checks (`tsc -b`) before building.
+GitHub Pages (landing + Flight Recorder) deploys from `.github/workflows/pages.yml` on push to `main`; the workflow type-checks (`tsc -b`) before building and only deploys once the repo is public.
+`.github/workflows/market-data-check.yml` is a manual job that checks exchange reachability, runs one live cycle on real candles, and can build the scenario bank as a downloadable artifact.
 The web app reads `web/public/attack_metrics.json` and `attack_lab_demo.json` written by `run_attacks.py`,
 and labels every panel as Measured, Simulated, or Demo so nothing seeded passes as a result.
 
