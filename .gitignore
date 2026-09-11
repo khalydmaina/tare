@@ -22,6 +22,7 @@ data/*.tmp
 data/mock/
 data/live_state.json
 data/behavior_state.json
+data/scenarios.jsonl
 attacks/_generated/
 backtest/_cache/
 
