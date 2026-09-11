@@ -388,8 +388,17 @@ export function FlightRecorder() {
                 </div>
               ) : (
                 <Empty>
-                  No setups yet. The bot checks {live?.symbols ?? 10} coins every 15 minutes and most checks find
-                  nothing worth asking the AI about.
+                  <span>
+                    No setups yet. The bot checks {live?.symbols ?? 10} coins every 15 minutes and most checks find
+                    nothing worth asking the AI about.
+                    <button
+                      type="button"
+                      onClick={() => setTab('attacks')}
+                      className="mt-3 block w-full text-guarded underline-offset-4 hover:underline"
+                    >
+                      Meanwhile, watch the Inspector judge replayed setups in the Attack Lab →
+                    </button>
+                  </span>
                 </Empty>
               )}
             </Panel>
