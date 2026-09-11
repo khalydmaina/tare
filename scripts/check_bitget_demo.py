@@ -65,6 +65,20 @@ def main() -> int:
         return 1
     for a in accounts or []:
         print(f"demo futures {a.get('marginCoin')}: equity {a.get('accountEquity')}, available {a.get('available')}")
+    # Demo money can sit in another demo wallet (spot, funding) until it is moved to futures
+    for path, label in (("/api/v2/account/all-account-balance", "demo wallets (USDT value)"),
+                        ("/api/v2/spot/account/assets", "demo spot coins")):
+        try:
+            rows = broker._get(path) or []
+            shown = [
+                (r.get("accountType"), r.get("usdtBalance")) if "accountType" in r
+                else (r.get("coin"), r.get("available"))
+                for r in rows
+                if float(r.get("usdtBalance") or r.get("available") or 0) > 0
+            ]
+            print(f"{label}: {shown or 'all empty'}")
+        except Exception as exc:
+            print(f"{label}: could not read ({explain(exc)})")
     print(f"{symbol}: position mode {acct.get('posMode')}, margin mode {acct.get('marginMode')}, "
           f"cross leverage {acct.get('crossedMarginLeverage')}")
     if not args.order:
