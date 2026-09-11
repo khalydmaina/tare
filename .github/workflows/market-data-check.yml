@@ -27,13 +27,24 @@ jobs:
 
       - name: Exchange reachability
         run: |
-          for url in \
-            "https://api.bitget.com/api/v2/mix/market/candles?symbol=BTCUSDT&productType=USDT-FUTURES&granularity=15m&limit=2" \
-            "https://fapi.binance.com/fapi/v1/klines?symbol=BTCUSDT&interval=15m&limit=2" \
-            "https://api.bybit.com/v5/market/kline?category=linear&symbol=BTCUSDT&interval=15&limit=2"; do
-            code=$(curl -s -o /tmp/body -w "%{http_code}" --max-time 20 "$url" || echo "000")
-            echo "$code ${url%%\?*} $(head -c 120 /tmp/body 2>/dev/null)"
-          done
+          # Trader feed (Bitget), current reference venues (Binance, Bybit), and candidates
+          # for a reference venue that also answers from US-hosted runners.
+          check() {
+            code=$(curl -s -o /tmp/body -w "%{http_code}" --max-time 20 "$@" || echo "000")
+            printf '%-18s %s  %s\n' "$NAME" "$code" "$(head -c 90 /tmp/body 2>/dev/null | tr -d '\n')"
+          }
+          NAME="bitget perp";       check "https://api.bitget.com/api/v2/mix/market/candles?symbol=BTCUSDT&productType=USDT-FUTURES&granularity=15m&limit=2"
+          NAME="binance perp";      check "https://fapi.binance.com/fapi/v1/klines?symbol=BTCUSDT&interval=15m&limit=2"
+          NAME="bybit perp";        check "https://api.bybit.com/v5/market/kline?category=linear&symbol=BTCUSDT&interval=15&limit=2"
+          NAME="okx perp";          check "https://www.okx.com/api/v5/market/candles?instId=BTC-USDT-SWAP&bar=15m&limit=2"
+          NAME="gate perp";         check "https://api.gateio.ws/api/v4/futures/usdt/candlesticks?contract=BTC_USDT&interval=15m&limit=2"
+          NAME="kucoin perp";       check "https://api-futures.kucoin.com/api/v1/kline/query?symbol=XBTUSDTM&granularity=15"
+          NAME="mexc perp";         check "https://contract.mexc.com/api/v1/contract/kline/BTC_USDT?interval=Min15"
+          NAME="kraken futures";    check "https://futures.kraken.com/api/charts/v1/trade/PF_XBTUSD/15m"
+          NAME="hyperliquid perp";  check -X POST -H "Content-Type: application/json" -d '{"type":"meta"}' "https://api.hyperliquid.xyz/info"
+          NAME="binance spot data"; check "https://data-api.binance.vision/api/v3/klines?symbol=BTCUSDT&interval=15m&limit=2"
+          NAME="coinbase spot";     check "https://api.exchange.coinbase.com/products/BTC-USD/candles?granularity=900"
+          NAME="kraken spot";       check "https://api.kraken.com/0/public/OHLC?pair=XBTUSDT&interval=15"
 
       - name: One live cycle on real candles (simulated trader)
         run: python scripts/run_live.py --once --mock-llm --gate G2
