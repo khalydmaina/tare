@@ -8,7 +8,7 @@ llm:
   prompt_version: "trader_v2"   # trader/prompts/<version>.txt; v2 fixes SL/TP to the SMC setup
 
 market:
-  symbols: [BTCUSDT, ETHUSDT, SOLUSDT]
+  symbols: [BTCUSDT, ETHUSDT, SOLUSDT, XRPUSDT, DOGEUSDT, BNBUSDT, ADAUSDT, AVAXUSDT, LINKUSDT, LTCUSDT]
   entry_tf: 15m
   bias_tfs: [1h, 4h]
   reference_venue: "okx"   # second venue for C1 (okx | binance | bybit); Binance and Bybit refuse US-hosted servers

@@ -3,7 +3,7 @@
 
 1. close guarded and shadow positions that hit TP, SL or the timeout; record the outcomes
 2. feed every shadow outcome (each Trader take, approved or vetoed) into the calibration matrix
-3. closed candles → SMC → LLM → Inspector → broker + shadow
+3. closed candles → SMC → LLM → Inspector → broker + shadow (each closed bar at most once)
 4. save broker, shadow, behaviour and calibration state so a restart resumes where it stopped
 
 --mock-llm and --offline are plumbing modes. They write to data/mock/ and never touch the
@@ -172,6 +172,7 @@ def run_cycle(
     offline: bool = False,
     behavior: Optional[BehaviorState] = None,
     now: Optional[datetime] = None,
+    processed_bars: Optional[dict[str, str]] = None,
 ) -> dict[str, int]:
     now = now or datetime.now(timezone.utc)
     behavior = behavior if behavior is not None else BehaviorState()
@@ -219,7 +220,7 @@ def run_cycle(
     )
     if closed["shadow"]:
         snapshot_calibration(rec, cal)
-    stats = {"setups": 0, "takes": 0, "orders": 0,
+    stats = {"setups": 0, "takes": 0, "orders": 0, "already_processed": 0,
              "closed_guarded": closed["guarded"], "closed_shadow": closed["shadow"],
              "feeds_failed": len(market["symbols"]) - len(feeds)}
     account = broker.account.to_account_state()
@@ -230,6 +231,13 @@ def run_cycle(
         if not (c15 and c1h and c4h and c15_all):
             log.warning("%s: no closed candles; skipping symbol this cycle", symbol)
             continue
+        if processed_bars is not None:
+            # A late or doubled trigger inside the same 15m bar must not trade it twice
+            bar = c15[-1].open_time.isoformat()
+            if processed_bars.get(symbol) == bar:
+                stats["already_processed"] += 1
+                continue
+            processed_bars[symbol] = bar
         last_price = c15_all[-1].close
         sent = sentiment.fetch([symbol])
         atr_series = atr_pct_series(c1h)
@@ -355,11 +363,23 @@ def state_paths(sandbox: bool) -> dict[str, Path]:
     }
 
 
-def save_state(path: Path, broker: PaperBroker, shadow: ShadowBook) -> None:
+def save_state(
+    path: Path,
+    broker: PaperBroker,
+    shadow: ShadowBook,
+    processed_bars: Optional[dict[str, str]] = None,
+) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(path.name + ".tmp")
     tmp.write_text(
-        json.dumps({"broker": broker.account.to_dict(), "shadow": shadow.to_dict()}, indent=2),
+        json.dumps(
+            {
+                "broker": broker.account.to_dict(),
+                "shadow": shadow.to_dict(),
+                "processed_bars": processed_bars or {},
+            },
+            indent=2,
+        ),
         encoding="utf-8",
     )
     tmp.replace(path)
@@ -372,9 +392,16 @@ def load_state(path: Path, equity: float) -> tuple[PaperModeAccount, ShadowBook]
     return PaperModeAccount.from_dict(data["broker"]), ShadowBook.from_dict(data["shadow"])
 
 
+def load_processed_bars(path: Path) -> dict[str, str]:
+    """Newest closed bar already traded per symbol, so a restarted run skips it."""
+    if not path.exists():
+        return {}
+    return dict(json.loads(path.read_text(encoding="utf-8")).get("processed_bars") or {})
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--once", action="store_true", help="Single cycle then exit")
+    parser.add_argument("--once", action="store_true", help="Single cycle then exit (non-zero if it failed)")
     parser.add_argument("--gate", default="G2", choices=["G0", "G1", "G2A", "G2"])
     parser.add_argument("--interval", type=int, default=900,
                         help="Seconds between cycles if the scheduler cannot start")
@@ -391,8 +418,8 @@ def main() -> None:
     trader = LLMTrader(cfg.settings)
     if trader._client is None and not args.mock_llm:
         sys.exit(
-            "No LLM API key found (XAI_API_KEY, or the variable named in llm.api_key_env). "
-            "Add it to .env, or pass --mock-llm to run the simulated trader on purpose."
+            "No LLM API key found (LLM_API_KEY, XAI_API_KEY, or the variable named in "
+            "llm.api_key_env). Add it to .env, or pass --mock-llm to run the simulated trader on purpose."
         )
 
     sandbox = args.mock_llm or args.offline
@@ -400,6 +427,7 @@ def main() -> None:
     rec = FlightRecorder(sandbox_dir() / "tare.db" if sandbox else db_path(cfg.settings))
     equity0 = float(os.getenv("PAPER_EQUITY", "10000"))
     account, shadow = load_state(paths["state"], equity0)
+    processed_bars = load_processed_bars(paths["state"])
     broker = PaperBroker(starting_equity=equity0, account=account)
 
     real_cal = ROOT / "data" / "calibration.json"
@@ -427,6 +455,7 @@ def main() -> None:
     rec.set_status("running", note)
     snapshot_calibration(rec, cal)
     lock = threading.Lock()
+    last = {"ok": True}
 
     def set_health(text: str) -> None:
         # The status row is what the dashboard and export show, so a dead feed is visible there
@@ -445,6 +474,7 @@ def main() -> None:
             stats = run_cycle(
                 cfg, rec, trader, cal, bitget, ref, sentiment, broker, shadow, args.gate,
                 mock_llm=args.mock_llm, offline=args.offline, behavior=behavior,
+                processed_bars=processed_bars,
             )
             log.info("cycle done %s equity guarded=%.2f shadow=%.2f", stats,
                      broker.account.equity, shadow.equity)
@@ -452,17 +482,20 @@ def main() -> None:
             if stats["feeds_failed"]:
                 log.warning("%d of %d symbols had no market data this cycle",
                             stats["feeds_failed"], n_symbols)
+            last["ok"] = stats["feeds_failed"] < n_symbols
             set_health(f"{stamp}: {n_symbols - stats['feeds_failed']}/{n_symbols} feeds ok, "
                        f"{stats['setups']} setups, {stats['orders']} orders")
         except Exception:
+            last["ok"] = False
             log.exception("cycle failed")
             set_health(f"{stamp}: FAILED, see logs")
         finally:
             try:
                 cal.save(paths["calibration"])
                 behavior.save(paths["behavior"])
-                save_state(paths["state"], broker, shadow)
+                save_state(paths["state"], broker, shadow, processed_bars)
             except Exception:
+                last["ok"] = False
                 log.exception("saving state failed")
             lock.release()
 
@@ -470,27 +503,29 @@ def main() -> None:
     try:
         if args.once:
             cycle()
-            return
-        scheduler = None
-        try:
-            from core.clock import CandleCloseScheduler
-
-            scheduler = CandleCloseScheduler(cfg.settings["market"]["entry_tf"])
-            scheduler.start(cycle)
-            log.info("scheduler started; also running an immediate cycle")
-        except Exception:
-            log.exception("scheduler failed; using a sleep loop every %ss", args.interval)
+        else:
             scheduler = None
-        cycle()
-        while True:
-            time.sleep(60 if scheduler else args.interval)
-            if scheduler is None:
-                cycle()
+            try:
+                from core.clock import CandleCloseScheduler
+
+                scheduler = CandleCloseScheduler(cfg.settings["market"]["entry_tf"])
+                scheduler.start(cycle)
+                log.info("scheduler started; also running an immediate cycle")
+            except Exception:
+                log.exception("scheduler failed; using a sleep loop every %ss", args.interval)
+                scheduler = None
+            cycle()
+            while True:
+                time.sleep(60 if scheduler else args.interval)
+                if scheduler is None:
+                    cycle()
     except (KeyboardInterrupt, SystemExit):
         pass
     finally:
         # Keep the last health line, so a stopped bot still says how its final cycle went
         rec.set_status("stopped", rec.get_status().get("note") or note)
+    if args.once and not last["ok"]:
+        sys.exit(1)  # a scheduler (GitHub Actions) should see a failed cycle as a failed run
 
 
 if __name__ == "__main__":

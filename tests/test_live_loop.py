@@ -184,3 +184,25 @@ def test_a_dead_feed_is_counted_not_faked(live):
     assert stats["feeds_failed"] == 1 and stats["setups"] == 0
     assert not ns.seen  # SMC never ran on anything
     assert ns.rec.fetch_equity("guarded")  # the cycle still marks equity
+
+
+def test_the_same_closed_bar_is_never_traded_twice(live, tmp_path):
+    """GitHub's timer can fire twice inside one 15m bar; the second run must not re-enter."""
+    ns = live
+    _load_feeds(ns, last_open=ns.t0)
+    processed: dict[str, str] = {}
+
+    def run(now):
+        return run_live.run_cycle(
+            ns.cfg, ns.rec, ns.trader, ns.cal, ns.trader_feed, ns.ref_feed, ns.sentiment,
+            ns.broker, ns.shadow, "G1", mock_llm=True, now=now, processed_bars=processed,
+        )
+
+    first = run(ns.t0 + timedelta(seconds=1))
+    again = run(ns.t0 + timedelta(minutes=10))  # still inside the same bar
+    assert first["orders"] == 1
+    assert again["already_processed"] == 1 and again["setups"] == 0 and again["orders"] == 0
+
+    path = tmp_path / "state.json"
+    run_live.save_state(path, ns.broker, ns.shadow, processed)
+    assert run_live.load_processed_bars(path) == processed

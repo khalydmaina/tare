@@ -1,0 +1,93 @@
+name: Live paper bot
+
+# One live cycle every 15 minutes. State and the paper trading log live on the
+# paper-log branch (one commit, force-pushed), so runs pick up where the last one stopped.
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: live-bot
+  cancel-in-progress: false
+
+jobs:
+  cycle:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    env:
+      LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
+      LLM_BASE_URL: ${{ vars.LLM_BASE_URL || 'https://api.groq.com/openai/v1' }}
+      LLM_MODEL: ${{ vars.LLM_MODEL || 'openai/gpt-oss-120b' }}
+      BITGET_API_KEY: ${{ secrets.BITGET_API_KEY }}
+      BITGET_API_SECRET: ${{ secrets.BITGET_API_SECRET }}
+      BITGET_PASSPHRASE: ${{ secrets.BITGET_PASSPHRASE }}
+      CRYPTOPANIC_TOKEN: ${{ secrets.CRYPTOPANIC_TOKEN }}
+      TARE_DB: data/tare.db
+    steps:
+      - name: Check the AI key is configured
+        id: gate
+        run: |
+          if [ -z "$LLM_API_KEY" ]; then
+            echo "::warning::The LLM_API_KEY secret is not set, so the bot is not trading yet"
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/checkout@v4
+        if: steps.gate.outputs.ready == 'true'
+      - uses: actions/setup-python@v5
+        if: steps.gate.outputs.ready == 'true'
+        with:
+          python-version: "3.12"
+      - name: Install
+        if: steps.gate.outputs.ready == 'true'
+        run: pip install -q pydantic pandas numpy pyyaml python-dotenv tenacity scipy httpx openai apscheduler
+
+      - name: Restore state from the paper-log branch
+        if: steps.gate.outputs.ready == 'true'
+        run: |
+          if git fetch -q --depth=1 origin paper-log; then
+            for f in data/tare.db data/live_state.json data/behavior_state.json data/calibration.json; do
+              if git show "FETCH_HEAD:$f" > "$f.restore" 2>/dev/null && [ -s "$f.restore" ]; then
+                mv "$f.restore" "$f"
+              else
+                rm -f "$f.restore"
+              fi
+            done
+            echo "restored state from paper-log"
+          else
+            echo "first run: no paper-log branch yet"
+          fi
+
+      - name: Run one cycle
+        if: steps.gate.outputs.ready == 'true'
+        run: python scripts/run_live.py --once --gate G2
+
+      - name: Export paper trading log
+        if: always() && steps.gate.outputs.ready == 'true'
+        run: python scripts/export_paper_log.py
+
+      - name: Save state and log to the paper-log branch
+        if: always() && steps.gate.outputs.ready == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          out=$(mktemp -d)
+          mkdir -p "$out/data"
+          for f in tare.db live_state.json behavior_state.json calibration.json; do
+            if [ -f "data/$f" ]; then cp "data/$f" "$out/data/"; fi
+          done
+          cp -r paper_log "$out/"
+          cd "$out"
+          git init -q -b paper-log
+          git config user.name "tare-bot"
+          git config user.email "tare-bot@users.noreply.github.com"
+          git add -A
+          git commit -qm "Paper trading log $(date -u +%Y-%m-%dT%H:%MZ)"
+          git push -qf "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" paper-log
+          echo "saved to paper-log"
