@@ -79,6 +79,13 @@ def main() -> int:
             print(f"{label}: {shown or 'all empty'}")
         except Exception as exc:
             print(f"{label}: could not read ({explain(exc)})")
+    # Older demo accounts keep their money under the S-prefixed demo product type
+    try:
+        for a in broker._get("/api/v2/mix/account/accounts", {"productType": "SUSDT-FUTURES"}) or []:
+            print(f"old-style demo futures {a.get('marginCoin')}: equity {a.get('accountEquity')}, "
+                  f"available {a.get('available')}")
+    except Exception as exc:
+        print(f"old-style demo futures: could not read ({explain(exc)})")
     print(f"{symbol}: position mode {acct.get('posMode')}, margin mode {acct.get('marginMode')}, "
           f"cross leverage {acct.get('crossedMarginLeverage')}")
     if not args.order:
