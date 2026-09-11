@@ -131,7 +131,25 @@ def main() -> int:
         print(f"FAILED closing the test position, it is still open on the demo account "
               f"with its stop and target attached: {explain(exc)}")
         return 1
-    print("order check passed" if ok else "order check incomplete: the position was not visible")
+
+    # An earlier failed check may have left a test long behind; close whatever long remains
+    time.sleep(2)
+    try:
+        left = sum(
+            float(p.get("total") or 0)
+            for p in broker._get("/api/v2/mix/position/single-position",
+                                 {"symbol": symbol, "productType": PRODUCT, "marginCoin": "USDT"}) or []
+            if p.get("holdSide") == "long"
+        )
+        if left > 0:
+            leftover = SimpleNamespace(symbol=symbol, side=Side.LONG, size=left, fill_price=fill)
+            print(f"closing {left:g} {symbol} left from an earlier check at "
+                  f"{broker._close_api_position(leftover)}")  # type: ignore[arg-type]
+        print("no test position left open")
+    except Exception as exc:
+        print(f"could not confirm the demo account is flat: {explain(exc)}")
+        ok = False
+    print("order check passed" if ok else "order check incomplete: see above")
     return 0 if ok else 1
 
 

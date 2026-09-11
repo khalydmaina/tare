@@ -550,7 +550,9 @@ class PaperBroker:
         return record
 
     def _close_api_position(self, pos: Position) -> float:
-        bg_side = "sell" if pos.side == Side.LONG else "buy"
+        # Hedge mode names the position, not the trade: buy + close closes a long. sell + close
+        # targets a short, and Bitget answers 22002 "No position to close".
+        bg_side = "buy" if pos.side == Side.LONG else "sell"
         # Bitget rejects a size with more decimals than the contract allows ("44.0" for a 0-place coin)
         spec = self._contract_spec(pos.symbol)
         payload = {
