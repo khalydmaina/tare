@@ -70,7 +70,7 @@ def load_scenarios(path: Path) -> list[Scenario]:
             candles_15m=_candles(d["c15"], sym, "15m", "bitget"),
             candles_1h=_candles(d["c1h"], sym, "1h", "bitget"),
             candles_4h=_candles(d["c4h"], sym, "4h", "bitget"),
-            reference_15m=_candles(d["r15"], sym, "15m", "binance"),
+            reference_15m=_candles(d["r15"], sym, "15m", d.get("reference_venue", "binance")),
             sentiment=[], true_result=d["true_result"], regime=d.get("regime", "mid"),
             r_multiple=d.get("r_multiple"), as_of=datetime.fromisoformat(d["as_of"]),
         ))

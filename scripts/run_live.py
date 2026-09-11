@@ -413,7 +413,7 @@ def main() -> None:
     behavior = BehaviorState.load(paths["behavior"])
 
     bitget = BitgetFeed(paper=True)
-    ref = ReferenceFeed(cfg.settings["market"].get("reference_venue", "binance"))
+    ref = ReferenceFeed(cfg.settings["market"].get("reference_venue", "okx"))
     sentiment = SentimentFeed(cfg.settings["market"].get("sentiment_lookback_hours", 6))
 
     trader_note = "SIMULATED-trader" if args.mock_llm else f"llm={trader.model}"

@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """Build a REAL scenario bank for the attack harness.
 
-Pulls historical Bitget USDT-futures candles (what the Trader sees) and
-Binance USDT-M futures candles (the Inspector's independent reference),
-walks the deterministic SMC engine forward bar by bar, and labels every
-setup with what actually happened next (TP before SL = win, SL first or
-timeout = loss). No LLM calls here, so it is free to run.
+Pulls historical Bitget USDT-futures candles (what the Trader sees) and the reference
+venue's USDT perpetual candles (the Inspector's independent feed, market.reference_venue,
+OKX by default), walks the deterministic SMC engine forward bar by bar, and labels every
+setup with what actually happened next (TP before SL = win, SL first or timeout = loss).
+No LLM calls here, so it is free to run.
 
 Output: data/scenarios.jsonl, one scenario per line, consumed by
     python scripts/run_attacks.py --scenarios data/scenarios.jsonl --llm real
@@ -25,15 +25,13 @@ import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-import httpx
-
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from core.config import ConfigBundle  # noqa: E402
 from core.schemas import Candle  # noqa: E402
 from data.bitget_feed import TF_MAP as BG_TF, BitgetFeed  # noqa: E402
-from data.reference_feed import TF_MAP as BN_TF, ReferenceFeed  # noqa: E402
+from data.reference_feed import ReferenceFeed  # noqa: E402
 from execution.labeler import resolve  # noqa: E402
 from inspector.regime import ATR_PERIOD, LOOKBACK_BARS, atr_pct_series, regime_from_history  # noqa: E402
 from trader.candidates import find_candidates  # noqa: E402
@@ -71,27 +69,6 @@ def bitget_history(symbol: str, tf: str, start: datetime, end: datetime) -> list
     return sorted((c for c in out.values() if start <= c.open_time < end), key=lambda c: c.open_time)
 
 
-def binance_history(symbol: str, tf: str, start: datetime, end: datetime) -> list[Candle]:
-    ref = ReferenceFeed("binance")
-    out: dict[datetime, Candle] = {}
-    cursor = start
-    with httpx.Client(timeout=20.0) as client:
-        while cursor < end:
-            r = client.get("https://fapi.binance.com/fapi/v1/klines", params={
-                "symbol": symbol, "interval": BN_TF[tf], "startTime": _ms(cursor),
-                "endTime": _ms(end), "limit": 1500,
-            })
-            r.raise_for_status()
-            batch = ref._parse_binance(r.json(), symbol, tf)
-            if not batch:
-                break
-            for c in batch:
-                out[c.open_time] = c
-            cursor = max(c.open_time for c in batch) + timedelta(minutes=TF_MIN[tf])
-            time.sleep(0.1)
-    return sorted(out.values(), key=lambda c: c.open_time)
-
-
 def _dump(c: Candle) -> list:
     return [c.open_time.isoformat(), c.open, c.high, c.low, c.close, c.volume]
 
@@ -110,6 +87,8 @@ def main() -> None:
     cfg = ConfigBundle()
     smc_cfg = cfg.settings.get("smc", {})
     timeout = int(cfg.settings["calibration"]["timeout_bars"])
+    venue = cfg.settings["market"].get("reference_venue", "okx")
+    reference = ReferenceFeed(venue)
     end = datetime.now(timezone.utc).replace(second=0, microsecond=0) - timedelta(hours=2)
     start = end - timedelta(days=args.days)
 
@@ -123,9 +102,9 @@ def main() -> None:
             # 31 extra days of 1h bars so the regime tercile has a full 30-day history
             c1h = bitget_history(symbol, "1h", start - timedelta(days=31), end)
             c4h = bitget_history(symbol, "4h", start - timedelta(days=40), end)
-            r15 = binance_history(symbol, "15m", start, end)
-            log.info("%s: bitget 15m=%d 1h=%d 4h=%d | binance 15m=%d",
-                     symbol, len(c15), len(c1h), len(c4h), len(r15))
+            r15 = reference.history(symbol, "15m", start, end)
+            log.info("%s: bitget 15m=%d 1h=%d 4h=%d | %s 15m=%d",
+                     symbol, len(c15), len(c1h), len(c4h), venue, len(r15))
             ref_by_t = {c.open_time: c for c in r15}
             # Same regime definition as the live loop (inspector/regime.py):
             # atr_series[j] belongs to c1h[j + ATR_PERIOD]
@@ -171,6 +150,7 @@ def main() -> None:
                         "true_result": label,
                         "outcome": res,
                         "r_multiple": outcome.r_multiple,
+                        "reference_venue": venue,
                         "setup": setup.model_dump(mode="json"),
                         "c15": [_dump(c) for c in window[-50:]],
                         "c1h": [_dump(c) for c in w1[-50:]],
