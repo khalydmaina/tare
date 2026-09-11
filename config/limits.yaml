@@ -1,0 +1,12 @@
+max_risk_per_trade: 0.01
+max_concurrent: 2
+max_per_symbol: 1
+max_leverage: 3
+daily_loss_limit: 0.03
+consecutive_loss_cooldown:
+  losses: 3
+  hours: 4
+max_drawdown_kill: 0.10
+stale_intervals: 2
+min_risk_to_trade: 0.002
+require_sl: true

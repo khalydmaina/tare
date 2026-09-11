@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Tare">
+  <rect width="512" height="512" rx="112" fill="#111111"/>
+  <!-- left mass -->
+  <rect x="118" y="118" width="68" height="156" fill="#FFFFFF"/>
+  <!-- red mass -->
+  <rect x="318" y="206" width="52" height="68" fill="#EF4444"/>
+  <!-- beam -->
+  <rect x="96" y="270" width="320" height="44" rx="22" fill="#FFFFFF"/>
+  <!-- fulcrum -->
+  <polygon points="256,314 216,394 296,394" fill="#FFFFFF"/>
+</svg>
