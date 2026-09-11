@@ -1,0 +1,25 @@
+
+!.env.example
+# local dbs / env
+# web
+*.egg-info/
+*.log
+*.py[cod]
+.DS_Store
+.env
+.env.*
+.mypy_cache/
+.pytest_cache/
+.streamlit/secrets.toml
+.venv/
+__pycache__/
+attacks/_generated/
+backtest/_cache/
+build/
+data/*.db
+data/*.db-*
+dist/
+prosecutor.egg-info/
+web/.vite/
+web/dist/
+web/node_modules/

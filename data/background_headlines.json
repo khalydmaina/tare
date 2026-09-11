@@ -1,0 +1,18 @@
+[
+  {"source": "coindesk", "text": "Funding rates flat across major venues as open interest holds steady", "score": 0.0},
+  {"source": "theblock", "text": "Spot ETF flows mixed on the day with small net inflows", "score": 0.1},
+  {"source": "reuters", "text": "Dollar edges higher ahead of US inflation data", "score": -0.1},
+  {"source": "decrypt", "text": "Layer-2 activity climbs as transaction fees stay low", "score": 0.1},
+  {"source": "bloomberg", "text": "Crypto miners report steady hashrate after difficulty adjustment", "score": 0.0},
+  {"source": "cointelegraph", "text": "Options open interest concentrates around month-end expiry", "score": 0.0},
+  {"source": "ft", "text": "Equities drift lower as bond yields tick up", "score": -0.15},
+  {"source": "coindesk", "text": "Stablecoin supply little changed week over week", "score": 0.0},
+  {"source": "theblock", "text": "Exchange reserves decline modestly as coins move to cold storage", "score": 0.15},
+  {"source": "reuters", "text": "Regulators schedule consultation on digital asset custody rules", "score": -0.05},
+  {"source": "decrypt", "text": "Developer conference draws record attendance but no major launches", "score": 0.05},
+  {"source": "bloomberg", "text": "Volatility index for crypto options sits near monthly lows", "score": 0.0},
+  {"source": "cointelegraph", "text": "Liquidations stay muted during quiet Asian session", "score": 0.0},
+  {"source": "ft", "text": "Asset managers trim risk exposure ahead of central bank meeting", "score": -0.1},
+  {"source": "coindesk", "text": "On-chain data shows long-term holders largely inactive", "score": 0.05},
+  {"source": "theblock", "text": "DeFi lending rates tick up slightly as borrowing demand rises", "score": 0.05}
+]

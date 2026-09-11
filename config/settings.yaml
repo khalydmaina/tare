@@ -1,0 +1,59 @@
+llm:
+  base_url: "https://api.x.ai/v1"
+  model: "grok-4.5"
+  api_key_env: "XAI_API_KEY"
+  temperature: 0.2
+  max_retries: 2
+  ablation_probe: true   # M2: re-ask with sentiment stripped (G2 only)
+  prompt_version: "trader_v1"
+
+market:
+  symbols: [BTCUSDT, ETHUSDT, SOLUSDT]
+  entry_tf: 15m
+  bias_tfs: [1h, 4h]
+  reference_venue: "binance"
+  candle_limit: 200
+  sentiment_lookback_hours: 6
+  stale_intervals: 2
+
+calibration:
+  buckets: [[50, 59], [60, 69], [70, 79], [80, 89], [90, 100]]
+  regimes: 3
+  min_n: 20
+  prior_p: 0.35
+  timeout_bars: 48
+
+anomaly:
+  veto_threshold: 0.7
+  penalty: 0.5
+  cross_venue_max_dev: 0.003
+  sentiment_z_soft: 2.5
+  confidence_jump_soft: 20
+  weights: {S2: 0.2, S3: 0.2, S4: 0.2, C2: 0.2, M1: 0.2}
+
+gate:
+  edge_margin: 0.03
+  kelly_scale: 0.25
+  base_risk: 0.01
+  min_risk: 0.002
+
+smc:
+  swing_lookback: 3
+  displacement_atr_mult: 1.5
+  sl_atr_buffer: 0.1
+  min_rr: 1.5
+  sl_atr_min: 0.5
+  sl_atr_max: 3.0
+  dead_market_atr_percentile: 10
+
+execution:
+  slippage_bps: 5
+  fee_bps: 4
+  lot_step: 0.001
+  paper_mode: true
+
+recorder:
+  db_path: "data/tare.db"
+
+dashboard:
+  refresh_seconds: 15

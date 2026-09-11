@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Tare mark">
+  <title>Tare</title>
+  <rect width="512" height="512" fill="#FFFFFF"/>
+  <rect x="40" y="40" width="432" height="432" fill="none" stroke="#0A0A0A" stroke-width="10"/>
+  <!-- left mass (gross) -->
+  <rect x="118" y="148" width="78" height="132" fill="#0A0A0A"/>
+  <!-- right mass (net) -->
+  <rect x="328" y="218" width="48" height="62" fill="#0A0A0A"/>
+  <!-- beam -->
+  <rect x="96" y="276" width="320" height="22" fill="#0A0A0A"/>
+  <!-- fulcrum -->
+  <polygon points="256,298 220,360 292,360" fill="#0A0A0A"/>
+  <!-- tare plate + zero tick -->
+  <rect x="184" y="386" width="144" height="16" fill="#0A0A0A"/>
+  <rect x="250" y="368" width="12" height="22" fill="#0A0A0A"/>
+</svg>
