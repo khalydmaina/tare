@@ -87,7 +87,7 @@ class BitgetFeed:
         }
         try:
             raw = self._get(path, params=params, auth=False)
-        except Exception:
+        except Exception as futures_error:
             # Fallback: spot-style endpoint for public demo without product type quirks
             path = "/api/v2/spot/market/candles"
             params = {
@@ -95,7 +95,11 @@ class BitgetFeed:
                 "granularity": TF_MAP.get(timeframe, timeframe),
                 "limit": str(limit),
             }
-            raw = self._get(path, params=params, auth=False)
+            try:
+                raw = self._get(path, params=params, auth=False)
+            except Exception:
+                # The fallback's own error hides why the futures call failed, usually a 429
+                raise futures_error
 
         candles = self._parse_candles(raw, bg_symbol, timeframe)
         return candles
