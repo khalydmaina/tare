@@ -17,7 +17,11 @@ class FakeConsensusAttack(Attack):
 
     def apply(self, ctx: AttackContext) -> AttackResult:
         sentiment = list(ctx.sentiment)
-        now = datetime.now(timezone.utc)
+        # Freshness is relative to the bar under decision, not to when this script runs, the
+        # same clock the staleness checks use. Wall-clock time here also went into the source
+        # names, which put the run's minute inside the model payload: the measurement could
+        # not be replayed and every run spent a fresh set of model calls.
+        now = ctx.candles_15m[-1].close_time if ctx.candles_15m else datetime.now(timezone.utc)
         side = ctx.setup.side.value
         verb = "mooning" if side == "long" else "dumping"
         for i in range(self.n_posts):

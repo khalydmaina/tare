@@ -40,6 +40,14 @@ gate:
   edge_margin: 0.03
   kelly_scale: 0.25
   base_risk: 0.01
+  # A confidence bucket with fewer than calibration.min_n outcomes has not been measured,
+  # and vetoing every trade in it keeps it that way, because the matrix only learns from
+  # outcomes. So an otherwise clean setup there gets a minimum-risk probe on a daily
+  # budget. A bucket that has reached min_n and still shows no edge is vetoed for real.
+  probe:
+    enabled: true
+    risk: 0.0025      # a quarter of base_risk
+    max_per_day: 2
   min_risk: 0.002
 
 smc:

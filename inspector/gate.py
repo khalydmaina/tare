@@ -75,6 +75,11 @@ def decide(
     max_risk = float(limits.get("max_risk_per_trade", 0.01))
     lot_step = float((settings.get("execution") or {}).get("lot_step", 0.001))
 
+    probe_cfg = gate_cfg.get("probe") or {}
+    probe_enabled = bool(probe_cfg.get("enabled", False))
+    probe_risk = float(probe_cfg.get("risk", 0.0025))
+    probe_max_per_day = int(probe_cfg.get("max_per_day", 2))
+
     anomaly_penalty = float((settings.get("anomaly") or {}).get("penalty", 0.5))
     anomaly_veto = float((settings.get("anomaly") or {}).get("veto_threshold", 0.7))
 
@@ -142,7 +147,7 @@ def decide(
             breakdown.notes["m2_conf_used"] = conf_eff
             breakdown.notes["m2_conf_stated"] = proposal.confidence
 
-    p_cal = calibration.lookup(conf_eff, ctx.regime)
+    p_cal, p_source, p_n = calibration.lookup_with_evidence(conf_eff, ctx.regime)
     p_adj = p_cal * (1.0 - anomaly_penalty * a)
     rr = float(proposal.rr)
     if rr <= 0 and proposal.risk_distance > 0:
@@ -152,12 +157,52 @@ def decide(
     p_be = 1.0 / (1.0 + rr) if rr > 0 else 1.0
 
     if p_adj < p_be + edge_margin:
-        return Decision.veto(
-            "no_calibrated_edge",
-            anomaly=a,
+        # No measured edge. If the reason is that this bucket has never been measured, a
+        # veto only keeps it that way: the matrix learns from outcomes, and refusing every
+        # uncalibrated trade means no outcome ever arrives. So an otherwise clean setup in
+        # an unmeasured bucket gets a minimum-risk probe, on a daily budget, instead. A
+        # bucket that has reached min_n and still shows no edge is a real veto.
+        probing = (
+            probe_enabled
+            and p_source == "prior"
+            and ctx.probes_today < probe_max_per_day
+            and a < anomaly_veto
+        )
+        if not probing:
+            return Decision.veto(
+                "no_calibrated_edge" if p_source != "prior" else "uncalibrated_no_probe_left",
+                anomaly=a,
+                p_adj=p_adj,
+                p_be=p_be,
+                p_cal=p_cal,
+                anomaly_breakdown=breakdown if use_anomaly else None,
+                gate_config=gate_config,
+            )
+
+        probe_size = sizing.size_for_risk(probe_risk, proposal, ctx.account, lot_step=lot_step)
+        max_leverage = float(limits.get("max_leverage", 3))
+        headroom = max(0.0, max_leverage * ctx.account.equity - ctx.account.open_notional)
+        entry_px = abs(float(proposal.entry))
+        if probe_size <= 0 or (entry_px > 0 and probe_size * entry_px > headroom):
+            return Decision.veto(
+                "probe_no_room",
+                anomaly=a,
+                p_adj=p_adj,
+                p_be=p_be,
+                p_cal=p_cal,
+                anomaly_breakdown=breakdown if use_anomaly else None,
+                gate_config=gate_config,
+            )
+        breakdown.notes["probe"] = f"{p_source} n={p_n}"
+        return Decision(
+            kind=DecisionKind.SHRINK,
+            reason="probe_uncalibrated",
+            size=probe_size,
+            risk_frac=probe_risk,
+            p_cal=p_cal,
             p_adj=p_adj,
             p_be=p_be,
-            p_cal=p_cal,
+            anomaly=a,
             anomaly_breakdown=breakdown if use_anomaly else None,
             gate_config=gate_config,
         )

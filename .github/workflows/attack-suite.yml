@@ -1,0 +1,89 @@
+name: Attack suite
+
+# Re-measures the attack table in docs/RESULTS.md with the real model, on the real scenario
+# bank, and commits the result. The local network reaches neither the exchanges nor, reliably,
+# the model, so this is where the published numbers come from.
+#
+# Answers already in data/llm_cache.json are reused, so a re-measurement after a gate change
+# usually costs no model calls at all. "replay" makes that a hard rule: it fails rather than
+# call the model, which is the mode to use when only the Inspector changed.
+on:
+  workflow_dispatch:
+    inputs:
+      attacks:
+        description: "Attacks to run"
+        default: "A1,A2,A3,A4,A4F"
+      gates:
+        description: "Gate configs to compare"
+        default: "G0,G1,G2A,G2"
+      max_eval:
+        description: "Cap on eval scenarios (0 = all)"
+        default: "40"
+      replay:
+        description: "Answer only from the cache; fail instead of calling the model"
+        type: boolean
+        default: false
+      commit:
+        description: "Commit the measured metrics and any new cached answers"
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+
+concurrency:
+  group: attack-suite
+
+jobs:
+  measure:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
+      LLM_BASE_URL: ${{ vars.LLM_BASE_URL }}
+      # The table has to name the model that actually answered, so this is pinned to the
+      # model the cache was built with rather than whatever the live bot is running today.
+      LLM_MODEL: ${{ vars.ATTACK_MODEL || 'gemini-3.1-flash-lite' }}
+      ATTACKS: ${{ inputs.attacks }}
+      GATES: ${{ inputs.gates }}
+      MAX_EVAL: ${{ inputs.max_eval }}
+      REPLAY: ${{ inputs.replay }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install
+        run: pip install -q pydantic pandas numpy pyyaml python-dotenv tenacity scipy httpx openai apscheduler
+
+      - name: Run the attack suite
+        run: |
+          if [ "$REPLAY" = "true" ]; then set -- --cache-only; fi
+          python scripts/run_attacks.py \
+            --llm real \
+            --scenarios data/scenarios.jsonl \
+            --cal-split 0.6 \
+            --max-eval "$MAX_EVAL" \
+            --attacks "$ATTACKS" \
+            --gates "$GATES" \
+            "$@"
+
+      - name: Show what changed
+        if: always()
+        run: git --no-pager diff --stat
+
+      - name: Commit the measurement
+        if: success() && inputs.commit
+        run: |
+          git config user.name "tare-bot"
+          git config user.email "tare-bot@users.noreply.github.com"
+          git add data/llm_cache.json docs/attack_metrics.json docs/attack_lab_demo.json \
+                  web/public/attack_metrics.json web/public/attack_lab_demo.json
+          if git diff --cached --quiet; then
+            echo "nothing changed"
+          else
+            git commit -m "Measure the attack suite: $ATTACKS over $GATES
+
+          Model ${LLM_MODEL}, real scenario bank, run by the attack-suite workflow."
+            git push
+          fi

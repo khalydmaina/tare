@@ -174,6 +174,8 @@ class PaperModeAccount:
         self.cooldown_until: Optional[datetime] = None
         # (losses in a row, cooldown hours); the live loop refreshes this from limits.yaml
         self.loss_cooldown: tuple[int, float] = (3, 4.0)
+        # Exploration probes taken today, against gate.probe.max_per_day.
+        self.probes_today = 0
 
     def roll_day(self, now: Optional[datetime] = None) -> None:
         """The daily-loss baseline resets at 00:00 UTC."""
@@ -181,6 +183,7 @@ class PaperModeAccount:
         if today != self.day:
             self.day = today
             self.day_start_equity = self.equity
+            self.probes_today = 0
 
     def open_notional(self) -> float:
         return sum(abs(p.fill_price * p.size) for p in self.positions.values())
@@ -255,6 +258,7 @@ class PaperModeAccount:
             "day_start_equity": self.day_start_equity,
             "day": self.day,
             "consecutive_losses": self.consecutive_losses,
+            "probes_today": self.probes_today,
             "cooldown_until": self.cooldown_until.isoformat() if self.cooldown_until else None,
             "positions": [_position_to_dict(p) for p in self.positions.values()],
         }
@@ -267,6 +271,7 @@ class PaperModeAccount:
                 setattr(acct, key, float(data[key]))
         acct.day = str(data.get("day", acct.day))
         acct.consecutive_losses = int(data.get("consecutive_losses", 0))
+        acct.probes_today = int(data.get("probes_today", 0))
         cooldown = data.get("cooldown_until")
         acct.cooldown_until = datetime.fromisoformat(cooldown) if cooldown else None
         for raw in data.get("positions", []):
