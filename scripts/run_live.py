@@ -475,8 +475,24 @@ def main() -> None:
     sentiment = SentimentFeed(cfg.settings["market"].get("sentiment_lookback_hours", 6))
 
     trader_note = "SIMULATED-trader" if args.mock_llm else f"llm={trader.model}"
-    fills_note = "bitget-demo-api" if broker._use_api else "local-sim-fills"
-    note = f"gate={args.gate} {trader_note} {fills_note}" + (" offline-candles" if args.offline else "")
+    offline_note = " offline-candles" if args.offline else ""
+
+    def current_note() -> str:
+        """Where fills actually went, not where they were configured to go.
+
+        The keys being present only means the bot tried the exchange. If Bitget rejected
+        the order the fill was simulated, and the status must say that rather than keep
+        advertising demo-account fills.
+        """
+        if not broker._use_api:
+            fills_note = "fills=local-sim"
+        elif broker.api_failures:
+            fills_note = "fills=local-sim-after-reject"
+        else:
+            fills_note = "fills=bitget-demo-api"
+        return f"gate={args.gate} {trader_note} {fills_note}{offline_note}"
+
+    note = current_note()
     if sandbox:
         log.warning("Plumbing mode: writing to %s; nothing recorded there is evidence", sandbox_dir())
     if account.positions or shadow.open_positions:
@@ -490,7 +506,7 @@ def main() -> None:
     def set_health(text: str) -> None:
         # The status row is what the dashboard and export show, so a dead feed is visible there
         try:
-            rec.set_status("running", f"{note} | {text}")
+            rec.set_status("running", f"{current_note()} | {text}")
         except Exception:
             log.exception("could not write bot status")
 
@@ -515,10 +531,14 @@ def main() -> None:
             # A cycle that found setups but got no answer for any of them is a failed
             # cycle, not a quiet one: the run should go red and the health line say why.
             mute = stats["setups"] > 0 and stats["model_failed"] >= stats["setups"]
-            last["ok"] = stats["feeds_failed"] < n_symbols and not mute
+            # An order the exchange refused is a broken execution path, so the run goes red
+            # even though the bot carried on with a simulated fill.
+            rejected = broker.api_failures[-1]["error"] if broker.api_failures else ""
+            last["ok"] = stats["feeds_failed"] < n_symbols and not mute and not rejected
             failed = f", {stats['model_failed']} model calls failed" if stats["model_failed"] else ""
+            refused = f", SIMULATED FILL: bitget refused the order ({rejected})" if rejected else ""
             set_health(f"{stamp}: {n_symbols - stats['feeds_failed']}/{n_symbols} feeds ok, "
-                       f"{stats['setups']} setups, {stats['orders']} orders{failed}")
+                       f"{stats['setups']} setups, {stats['orders']} orders{failed}{refused}")
         except Exception:
             last["ok"] = False
             log.exception("cycle failed")

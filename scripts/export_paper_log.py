@@ -45,7 +45,10 @@ TABLES = {
         ORDER BY d.id""",
     "trades.csv": """
         SELECT o.id AS order_id, c.ts AS opened_cycle, o.symbol, o.side, o.size, o.fill_price,
-               o.fees, o.exchange_order_id, p.confidence, d.reason AS decision, d.risk_frac,
+               o.fees, o.exchange_order_id,
+               CASE WHEN o.exchange_order_id IS NULL OR o.exchange_order_id = ''
+                    THEN 'simulated' ELSE 'exchange' END AS fill,
+               p.confidence, d.reason AS decision, d.risk_frac,
                oc.result, oc.r_multiple, oc.bars_held, oc.exit_price
         FROM orders o
         JOIN decisions d ON d.id = o.decision_id
@@ -110,15 +113,23 @@ def checks_fired(raw: str | None) -> list[str]:
     return fired
 
 
+FILL_LABELS = {
+    "bitget-demo-api": "Bitget demo account",
+    "local-sim": "local simulated fills",
+    "local-sim-after-reject": "local simulated fills (Bitget refused the order)",
+}
+
+
 def bot_info(note: str) -> dict[str, str]:
     """Split the status note run_live.py writes: 'gate=G2 llm=model fills | last cycle ...'."""
     config, _, health = note.partition(" | ")
     model = re.search(r"llm=(\S+)", config)
     gate = re.search(r"gate=(\S+)", config)
+    fills = re.search(r"fills=(\S+)", config)
     return {
         "model": model.group(1) if model else ("simulated trader" if "SIMULATED" in config else ""),
         "gate": gate.group(1) if gate else "",
-        "fills": "Bitget demo account" if "bitget-demo-api" in config else "local simulated fills",
+        "fills": FILL_LABELS.get(fills.group(1) if fills else "", "local simulated fills"),
         "health": health,
     }
 

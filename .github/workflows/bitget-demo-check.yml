@@ -14,6 +14,14 @@ on:
       symbol:
         description: "Contract for the test order"
         default: "DOGEUSDT"
+      notional:
+        description: "Test order size in USDT (default the contract minimum)"
+        default: ""
+      side:
+        description: "Direction of the test order"
+        type: choice
+        options: ["long", "short"]
+        default: "long"
 
 permissions:
   contents: read
@@ -28,6 +36,8 @@ jobs:
       BITGET_PASSPHRASE: ${{ secrets.BITGET_PASSPHRASE }}
       ORDER: ${{ inputs.order }}
       SYMBOL: ${{ inputs.symbol }}
+      NOTIONAL: ${{ inputs.notional }}
+      SIDE: ${{ inputs.side }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -38,5 +48,6 @@ jobs:
 
       - name: Check the demo account
         run: |
-          if [ "$ORDER" = "true" ]; then set -- --order; fi
+          if [ "$ORDER" = "true" ]; then set -- --order --side "$SIDE"; fi
+          if [ -n "$NOTIONAL" ]; then set -- "$@" --notional "$NOTIONAL"; fi
           python scripts/check_bitget_demo.py --symbol "$SYMBOL" "$@"
