@@ -195,9 +195,9 @@ def test_decide_veto_anomaly_injection(settings, limits, calibration):
 def test_no_edge_in_an_unmeasured_bucket_is_probed_not_vetoed(settings, limits):
     """An absence of evidence is not evidence of no edge.
 
-    Empty calibration → prior_p=0.35; with rr=1.5, p_be≈0.4, so the gate needs 0.43 and
-    has no reason to believe it. Vetoing would also be self-sealing: the matrix only fills
-    from outcomes, so the bucket would stay unmeasured forever. It takes a probe instead.
+    Empty calibration → prior_p=0.35; with rr=1.5, p_be≈0.4, so the gate needs 0.43 and has
+    no measurement behind either answer. It takes a minimum-risk probe instead, so the
+    guarded book has a record and the gate can be seen to discriminate.
     """
     cal = CalibrationMatrix(prior_p=0.35, min_n=20)
     d = decide(
