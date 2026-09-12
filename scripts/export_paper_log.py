@@ -116,6 +116,7 @@ def checks_fired(raw: str | None) -> list[str]:
 FILL_LABELS = {
     "bitget-demo-api": "Bitget demo account",
     "local-sim": "local simulated fills",
+    "local-sim-no-keys": "local simulated fills (Bitget demo requested, no keys set)",
     "local-sim-after-reject": "local simulated fills (Bitget refused the order)",
 }
 
