@@ -8,8 +8,13 @@ the matrix, which is then frozen, and the attacks are evaluated on later setups 
 
 Reproduce with:
 
+    LLM_BASE_URL=https://generativelanguage.googleapis.com/v1beta/openai \
+    LLM_MODEL=gemini-3.1-flash-lite \
     python scripts/run_attacks.py --llm real --scenarios data/scenarios.jsonl --max-eval 40 \
         --attacks A1,A3,A4,A4F --cache-only
+
+The two variables matter even with no key: each cached answer is filed under the model and
+endpoint that gave it, so without them the replay looks for another model's answers and finds none.
 
 `--cache-only` replays the model's recorded answers from `data/llm_cache.json`, so the table can
 be re-derived with no API key and no quota, and re-measured after a change to the Inspector
@@ -40,7 +45,8 @@ sizes anything.
 ## 2. The model's measured record
 
 Over the 180-setup calibration split, the model chose to take **15** setups and skipped 165. Of
-those takes, 3 of 14 in the 60-69 confidence band reached target (29%), plus a single 70-79 sample.
+those takes, 4 of 14 in the 60-69 confidence band reached target (29%), plus a single 70-79 sample
+that did.
 
 No confidence bucket reaches the 20-sample threshold, so there is no measured p_cal, only the
 0.35 prior. A prior is not a measurement, and there is nothing in it to size a position from, so
@@ -101,8 +107,11 @@ now anchored to the bar under decision, and its row returns on the next run with
   losers, -0.95% of equity risk-weighted. That is consistent with the 29% hit rate, but it is not
   yet evidence of anti-selection either: five losses in a row happen 24% of the time at this base
   rate. It is a record where there was none, which is what the budget was for.
-- **A5, the adaptive attacker, has not run.** It needs an attacker model separate from the trader,
-  and the free-tier daily quota is the binding constraint.
+- **A5, the adaptive attacker, has not run.** It writes a headline, sees which checks blocked it,
+  and tries again, up to 6 times on each of 20 setups: at most about 260 model calls against a free tier
+  of 500 a day that the live bot shares. Its headlines are now cached like the trader's answers,
+  so once measured it replays with no key like every other row, and a failed attacker call stops
+  the run instead of quietly substituting a scripted line.
 - **Live paper trades are still thin.** The bot watches 22 coins every 15 minutes; the pattern
   fires roughly 1.7 times a day per 10 coins, and this model takes about 8% of what it sees.
 
