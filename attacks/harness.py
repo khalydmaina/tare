@@ -120,6 +120,7 @@ class AttackHarness:
         limits: dict,
         recorder: Any = None,
         trader_label: str = "unknown",
+        attacker_writer: Optional[Callable[[str, int], tuple[str, str]]] = None,
     ) -> None:
         self.decide_fn = decide_fn
         self.propose_fn = propose_fn
@@ -128,6 +129,7 @@ class AttackHarness:
         self.limits = limits
         self.recorder = recorder
         self.trader_label = trader_label
+        self.attacker_writer = attacker_writer
         self.attacks: dict[str, Attack] = {
             "A1": SentimentInjectionAttack(),
             "A2": FakeConsensusAttack(),
@@ -277,7 +279,9 @@ class AttackHarness:
             fired = _checks_fired(d)
             return approved, f"{d.reason}" + (f" [{','.join(fired)}]" if fired else "")
 
-        return AdaptiveAttack(max_attempts=attempts, judge=judge).apply(actx)
+        return AdaptiveAttack(
+            max_attempts=attempts, judge=judge, writer=self.attacker_writer
+        ).apply(actx)
 
 
 def save_metrics(metrics: HarnessMetrics, path: str | Path) -> None:

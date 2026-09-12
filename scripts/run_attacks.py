@@ -21,8 +21,10 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import random
 import sys
+import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -32,6 +34,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 load_dotenv(ROOT / ".env")
 
+from attacks.a5_adaptive import attacker_config, call_attacker, parse_variant  # noqa: E402
 from attacks.harness import GATES, AttackHarness, Scenario, save_metrics  # noqa: E402
 from backtest.blind import blind_bundle  # noqa: E402
 from core.config import ConfigBundle, db_path  # noqa: E402
@@ -40,11 +43,12 @@ from data.sentiment_feed import SentimentFeed  # noqa: E402
 from inspector.calibration import CalibrationMatrix  # noqa: E402
 from inspector.gate import decide  # noqa: E402
 from recorder.db import FlightRecorder  # noqa: E402
-from trader.llm_trader import LLMTrader, build_user_payload  # noqa: E402
+from trader.llm_trader import LLMTrader, _retry_after, build_user_payload  # noqa: E402
 from trader.sim_trader import SimTrader  # noqa: E402
 
 # Consecutive failed model calls that end the run instead of quietly thinning the calibration
 MAX_FAILED_STREAK = 8
+PUBLISHED = ROOT / "docs" / "attack_metrics.json"
 
 
 # --------------------------------------------------------------------------- #
@@ -143,7 +147,22 @@ def cache_key(trader: LLMTrader, payload: str) -> str:
     return hashlib.sha256("\n\x1f".join(parts).encode("utf-8")).hexdigest()
 
 
-def make_propose_fn(mode: str, settings: dict, cache_path: Path | None, cache_only: bool = False):
+def load_cache(cache_path: Path | None) -> dict[str, dict]:
+    if cache_path and cache_path.exists():
+        return json.loads(cache_path.read_text())
+    return {}
+
+
+def spend(calls: dict) -> None:
+    """Count one model call, stopping the run first if it would go past --max-calls."""
+    if calls["max"] and calls["n"] >= calls["max"]:
+        sys.exit(f"Stopped at the budget of {calls['max']} model calls. Every answer so far is "
+                 "cached, so the next run resumes from here; nothing was measured.")
+    calls["n"] += 1
+
+
+def make_propose_fn(mode: str, settings: dict, cache_path: Path | None, cache_only: bool = False,
+                    cache: dict | None = None, calls: dict | None = None):
     base = LLMTrader(settings)
     if mode == "sim":
         sim = SimTrader(base)
@@ -152,9 +171,8 @@ def make_propose_fn(mode: str, settings: dict, cache_path: Path | None, cache_on
     if base._client is None and not cache_only:
         sys.exit("--llm real needs XAI_API_KEY (or the key named in llm.api_key_env)")
 
-    cache: dict[str, dict] = {}
-    if cache_path and cache_path.exists():
-        cache = json.loads(cache_path.read_text())
+    cache = load_cache(cache_path) if cache is None else cache
+    calls = {"n": 0, "max": 0} if calls is None else calls
 
     if cache_only:
         # Replaying a past run's answers to re-measure the gate after a policy change,
@@ -181,8 +199,9 @@ def make_propose_fn(mode: str, settings: dict, cache_path: Path | None, cache_on
         return propose_cached, f"{base.model}@{base.base_url} (cached)"
 
     # A rate limit or a dead key makes every proposal an empty skip. Without this the run
-    # finishes "fine" on a calibration built from nothing.
-    failures = {"streak": 0}
+    # finishes "fine" on a calibration built from nothing. The total matters too: a few
+    # scattered failures would otherwise sit in the table as skips the model never chose.
+    failures = {"streak": 0, "total": 0}
 
     def propose(setup: Setup, tfs: dict, digest: str):
         b_setup, b_tfs, _ = blind_bundle(setup, {k: list(v) for k, v in tfs.items()})
@@ -194,6 +213,7 @@ def make_propose_fn(mode: str, settings: dict, cache_path: Path | None, cache_on
             p = base.propose_mock(setup, confidence=raw["confidence"], action=raw["action"])
             p.rationale = raw.get("rationale", "")
             return p
+        spend(calls)
         p = base.propose(b_setup, b_tfs, digest, indicators)
         # Levels always come from the setup; put the real prices back
         p.entry, p.sl, p.tp = setup.entry, setup.sl, setup.tp
@@ -205,6 +225,7 @@ def make_propose_fn(mode: str, settings: dict, cache_path: Path | None, cache_on
                 cache_path.write_text(json.dumps(cache))
         else:
             failures["streak"] += 1
+            failures["total"] += 1
             # The provider's own reason is on the proposal. Printing it is the difference
             # between "something failed" and knowing whether to pace the calls, wait for a
             # daily reset, or change the key.
@@ -217,7 +238,64 @@ def make_propose_fn(mode: str, settings: dict, cache_path: Path | None, cache_on
                          "not pass as a finished run.")
         return p
 
+    propose.failures = failures  # type: ignore[attr-defined]
     return propose, f"{base.model}@{base.base_url}"
+
+
+def make_attacker_writer(cache: dict, cache_path: Path | None, cache_only: bool, calls: dict,
+                         misses: dict, tries: int = 3):
+    """A5's attacker, cached like the Trader: same prompt, same model, same headline.
+
+    The attacker's prompt carries only what the gate said about earlier attempts, so once the
+    Trader's answers and the attacker's are both cached the whole closed loop replays."""
+    key, base_url, model = attacker_config()
+    if not key and not cache_only:
+        sys.exit("A5 with --llm real needs ATTACKER_API_KEY (and ATTACKER_BASE_URL / "
+                 "ATTACKER_MODEL). Without one it walks a scripted ladder, which is plumbing, "
+                 "not a measurement of an adaptive attacker.")
+
+    def write(prompt: str, attempt: int) -> tuple[str, str]:
+        k = hashlib.sha256("\n\x1f".join(["attacker", model, base_url, prompt]).encode()).hexdigest()
+        if k in cache:
+            return cache[k]["text"], cache[k]["source"]
+        if cache_only:
+            misses["n"] += 1
+            return "(attacker answer missing from the cache)", f"missing-{attempt}"
+        reason = ""
+        for i in range(tries):
+            spend(calls)
+            try:
+                text, source = parse_variant(call_attacker(prompt, key, base_url, model), attempt)
+            except Exception as exc:  # noqa: BLE001 - retried, then the run stops
+                reason = str(exc)
+                print(f"  attacker call failed ({i + 1}/{tries}): {reason[:300]}", flush=True)
+                if i + 1 < tries:
+                    time.sleep(_retry_after(exc))
+                continue
+            cache[k] = {"text": text, "source": source}
+            if cache_path:
+                cache_path.write_text(json.dumps(cache))
+            return text, source
+        sys.exit(f"The attacker model failed {tries} times on one prompt. Last reason: "
+                 f"{reason[:500]}\nStopping: rows from a scripted stand-in would not be the "
+                 "adaptive attack.")
+
+    return write, f"{model}@{base_url}"
+
+
+def narrower_than(published: Path, meta: dict) -> list[str]:
+    """What the published table covers that this run leaves out; empty if nothing is lost."""
+    if not published.exists():
+        return []
+    try:
+        old = json.loads(published.read_text()).get("meta", {})
+    except ValueError:
+        return []
+    lost = [f"attack {a}" for a in old.get("attacks", []) if a not in meta["attacks"]]
+    lost += [f"gate {g}" for g in old.get("gates", []) if g not in meta["gates"]]
+    if (old.get("eval_scenarios") or 0) > meta["eval_scenarios"]:
+        lost.append(f"{old['eval_scenarios'] - meta['eval_scenarios']} eval scenarios")
+    return lost
 
 
 def fill_calibration(cal: CalibrationMatrix, scenarios: list[Scenario], propose) -> int:
@@ -243,6 +321,12 @@ def main() -> None:
     ap.add_argument("--gates", default=",".join(GATES))
     ap.add_argument("--a5-subset", type=int, default=20)
     ap.add_argument("--a5-attempts", type=int, default=10)
+    ap.add_argument("--max-calls", type=int, default=0,
+                    help="stop before the model call that would exceed this many (0 = no cap). "
+                         "Answers are cached, so the next run resumes where this one stopped")
+    ap.add_argument("--allow-narrower", action="store_true",
+                    help="publish even if this run covers fewer attacks, gates or scenarios "
+                         "than the table already in docs/attack_metrics.json")
     ap.add_argument("--no-background", action="store_true")
     ap.add_argument("--cache-only", action="store_true",
                     help="answer only from data/llm_cache.json; never call the model. Reports "
@@ -262,10 +346,20 @@ def main() -> None:
     if args.max_eval:
         eval_set = eval_set[: args.max_eval]
 
+    cache_path = ROOT / "data" / "llm_cache.json" if args.llm == "real" else None
+    cache = load_cache(cache_path)
+    calls = {"n": 0, "max": args.max_calls}
     propose, trader_label = make_propose_fn(
-        args.llm, cfg.settings, ROOT / "data" / "llm_cache.json" if args.llm == "real" else None,
-        cache_only=args.cache_only,
+        args.llm, cfg.settings, cache_path, cache_only=args.cache_only, cache=cache, calls=calls,
     )
+    attack_ids = [a.strip() for a in args.attacks.split(",") if a.strip()]
+    attacker_writer, attacker_label = None, None
+    if "A5" in attack_ids:
+        attacker_label = "scripted ladder (not evidence)"
+        if args.llm == "real":
+            attacker_writer, attacker_label = make_attacker_writer(
+                cache, cache_path, args.cache_only, calls, getattr(propose, "misses", {"n": 0}),
+            )
 
     cal = CalibrationMatrix.from_settings(cfg.settings)
     takes = fill_calibration(cal, cal_set, propose)
@@ -285,11 +379,11 @@ def main() -> None:
     harness = AttackHarness(
         decide_fn=decide, propose_fn=propose, calibration=cal, settings=cfg.settings,
         limits=cfg.limits, recorder=FlightRecorder(db_path(cfg.settings)),
-        trader_label=trader_label,
+        trader_label=trader_label, attacker_writer=attacker_writer,
     )
     metrics = harness.run(
         eval_set,
-        attack_ids=[a.strip() for a in args.attacks.split(",") if a.strip()],
+        attack_ids=attack_ids,
         gate_configs=[g.strip() for g in args.gates.split(",") if g.strip()],
         a5_subset=args.a5_subset, a5_attempts=args.a5_attempts,
     )
@@ -297,20 +391,18 @@ def main() -> None:
                          "eval_scenarios": len(eval_set),
                          "scenario_source": args.scenarios or "synthetic",
                          "generated_at": datetime.now(timezone.utc).isoformat()})
+    if attacker_label:
+        metrics.meta["attacker"] = attacker_label
+    print(f"model calls this run: {calls['n']}")
     missed = getattr(propose, "misses", {}).get("n", 0) if args.cache_only else 0
     if missed:
-        sys.exit(f"{missed} proposals were not in the cache, so this replay is incomplete and "
+        sys.exit(f"{missed} answers were not in the cache, so this replay is incomplete and "
                  "nothing was written. Run without --cache-only to fill them in.")
-    save_metrics(metrics, args.out)
-
-    # Attack Lab demo: first 3 eval scenarios, real rows and real checks
-    ids = {sc.scenario_id for sc in eval_set[:3]}
-    demo = [r for r in metrics.rows if r["scenario_id"] in ids]
-    for p in (ROOT / "docs" / "attack_lab_demo.json", ROOT / "web" / "public" / "attack_lab_demo.json"):
-        p.write_text(json.dumps({"meta": metrics.meta, "rows": demo}, indent=2, default=str))
-    (ROOT / "web" / "public" / "attack_metrics.json").write_text(
-        json.dumps({"meta": metrics.meta, "summary": metrics.summary_table()}, indent=2, default=str)
-    )
+    failed = getattr(propose, "failures", {}).get("total", 0)
+    if failed:
+        sys.exit(f"{failed} model calls failed, so their scenarios hold skips the model never "
+                 "chose and nothing was written. The answers that did arrive are cached; run "
+                 "again to fill in the rest.")
 
     gates = metrics.meta["gates"]
     print(f"\ntrader={trader_label} eval={len(eval_set)}")
@@ -323,7 +415,31 @@ def main() -> None:
             a = "-" if asr is None else f"{asr:.2f}"
             cells.append(f"{h} / {a}")
         print(f"{row['attack']:<8}" + "".join(f"{c:>14}" for c in cells))
-    print(f"\nwrote {args.out}")
+
+    # A run over part of the table fills the cache for that part; it must not replace the
+    # whole published table with the slice it happened to measure. The Attack Lab files
+    # mirror the published table, so they are only written alongside it.
+    out = Path(args.out)
+    publishing = out.resolve() == PUBLISHED.resolve()
+    lost = narrower_than(PUBLISHED, metrics.meta) if publishing and not args.allow_narrower else []
+    if lost:
+        print(f"\nnot publishing: the table in {PUBLISHED.relative_to(ROOT)} also covers "
+              f"{', '.join(lost)}. Run the full table (answers already cached cost nothing) or "
+              "pass --allow-narrower.")
+        return
+    save_metrics(metrics, out)
+    print(f"\nwrote {out}")
+    if not publishing:
+        return
+
+    # Attack Lab demo: first 3 eval scenarios, real rows and real checks
+    ids = {sc.scenario_id for sc in eval_set[:3]}
+    demo = [r for r in metrics.rows if r["scenario_id"] in ids]
+    for p in (ROOT / "docs" / "attack_lab_demo.json", ROOT / "web" / "public" / "attack_lab_demo.json"):
+        p.write_text(json.dumps({"meta": metrics.meta, "rows": demo}, indent=2, default=str))
+    (ROOT / "web" / "public" / "attack_metrics.json").write_text(
+        json.dumps({"meta": metrics.meta, "summary": metrics.summary_table()}, indent=2, default=str)
+    )
 
 
 if __name__ == "__main__":
