@@ -205,9 +205,16 @@ def make_propose_fn(mode: str, settings: dict, cache_path: Path | None, cache_on
                 cache_path.write_text(json.dumps(cache))
         else:
             failures["streak"] += 1
+            # The provider's own reason is on the proposal. Printing it is the difference
+            # between "something failed" and knowing whether to pace the calls, wait for a
+            # daily reset, or change the key.
+            reason = (p.rationale or "").replace("invalid_output: ", "")
+            print(f"  model call failed ({failures['streak']}/{MAX_FAILED_STREAK}): "
+                  f"{reason[:300] or 'no reason given'}", flush=True)
             if failures["streak"] >= MAX_FAILED_STREAK:
-                sys.exit(f"{MAX_FAILED_STREAK} model calls failed in a row (rate limit, quota or "
-                         "key). Stopping: a thinned calibration must not pass as a finished run.")
+                sys.exit(f"{MAX_FAILED_STREAK} model calls failed in a row. Last reason: "
+                         f"{reason[:500] or 'none given'}\nStopping: a thinned calibration must "
+                         "not pass as a finished run.")
         return p
 
     return propose, f"{base.model}@{base.base_url}"
