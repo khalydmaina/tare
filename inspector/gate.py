@@ -156,21 +156,16 @@ def decide(
         rr = reward / proposal.risk_distance if proposal.risk_distance else 0.0
     p_be = 1.0 / (1.0 + rr) if rr > 0 else 1.0
 
-    if p_adj < p_be + edge_margin:
-        # No measured edge. If the reason is that this bucket has never been measured, a
-        # veto only keeps it that way: the matrix learns from outcomes, and refusing every
-        # uncalibrated trade means no outcome ever arrives. So an otherwise clean setup in
-        # an unmeasured bucket gets a minimum-risk probe, on a daily budget, instead. A
-        # bucket that has reached min_n and still shows no edge is a real veto.
-        probing = (
-            probe_enabled
-            and p_source == "prior"
-            and ctx.probes_today < probe_max_per_day
-            and a < anomaly_veto
-        )
-        if not probing:
+    # An unmeasured bucket has no p_cal, only the prior, and Kelly sizing off a number
+    # nobody measured is the same mistake in the other direction: the first live trade was
+    # sized at full risk because the invented 0.35 happened to clear breakeven. So while a
+    # bucket is unmeasured every trade in it is exploration, sized as exploration, on a
+    # daily budget. The anomaly layer and the hard limits above still apply, and a bucket
+    # that has reached min_n and still shows no edge is vetoed on the evidence below.
+    if probe_enabled and p_source == "prior":
+        if ctx.probes_today >= probe_max_per_day:
             return Decision.veto(
-                "no_calibrated_edge" if p_source != "prior" else "uncalibrated_no_probe_left",
+                "uncalibrated_no_probe_left",
                 anomaly=a,
                 p_adj=p_adj,
                 p_be=p_be,
@@ -178,7 +173,6 @@ def decide(
                 anomaly_breakdown=breakdown if use_anomaly else None,
                 gate_config=gate_config,
             )
-
         probe_size = sizing.size_for_risk(probe_risk, proposal, ctx.account, lot_step=lot_step)
         max_leverage = float(limits.get("max_leverage", 3))
         headroom = max(0.0, max_leverage * ctx.account.equity - ctx.account.open_notional)
@@ -203,6 +197,17 @@ def decide(
             p_adj=p_adj,
             p_be=p_be,
             anomaly=a,
+            anomaly_breakdown=breakdown if use_anomaly else None,
+            gate_config=gate_config,
+        )
+
+    if p_adj < p_be + edge_margin:
+        return Decision.veto(
+            "no_calibrated_edge",
+            anomaly=a,
+            p_adj=p_adj,
+            p_be=p_be,
+            p_cal=p_cal,
             anomaly_breakdown=breakdown if use_anomaly else None,
             gate_config=gate_config,
         )

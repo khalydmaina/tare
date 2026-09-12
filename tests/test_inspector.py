@@ -304,3 +304,33 @@ def test_calibration_fallback_and_freeze(tmp_path):
     loaded = CalibrationMatrix.load(path)
     assert loaded.frozen is True
     assert loaded.lookup(70, "high") == wilson_lower(25, 25)
+
+
+def test_an_unmeasured_bucket_is_probe_sized_even_when_the_prior_clears_breakeven(settings, limits):
+    """The first live trade was sized at 1% because the invented prior beat breakeven.
+
+    p_cal was 0.35 with nothing measured in the cell, so Kelly had nothing to size from.
+    While the bucket is unmeasured the trade is exploration whichever side of breakeven
+    the prior lands on, and it is sized as exploration.
+    """
+    cal = CalibrationMatrix(prior_p=0.35, min_n=20)
+    generous = _proposal(confidence=70, rr=3.0, tp=103.0)  # p_be 0.25, prior 0.35 clears it
+    d = decide(generous, _ctx(), settings, limits, cal, gate_config="G1")
+
+    assert d.p_adj is not None and d.p_be is not None
+    assert d.p_adj >= d.p_be + settings["gate"]["edge_margin"], "the prior clears breakeven here"
+    assert d.kind == DecisionKind.SHRINK
+    assert d.reason == "probe_uncalibrated"
+    assert d.risk_frac == pytest.approx(settings["gate"]["probe"]["risk"])
+
+
+def test_a_measured_bucket_with_edge_is_sized_by_kelly_not_the_probe(settings, limits, calibration):
+    """calibration seeds 70-79/mid with 30 wins, so that cell is measured and has edge."""
+    p_cal, source, n = calibration.lookup_with_evidence(70, "mid")
+    assert source == "cell" and n >= 20
+
+    d = decide(_proposal(confidence=70, rr=3.0, tp=103.0), _ctx(), settings, limits,
+               calibration, gate_config="G1")
+    assert d.reason != "probe_uncalibrated"
+    assert d.kind in (DecisionKind.APPROVE, DecisionKind.SHRINK)
+    assert d.risk_frac > settings["gate"]["probe"]["risk"]
