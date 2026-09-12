@@ -75,12 +75,30 @@ jobs:
         if: always()
         run: git --no-pager diff --stat
 
-      - name: Commit the measurement
-        if: success() && inputs.commit
+      # Every answered call is progress worth keeping, even from a run that then hit a
+      # quota wall: the cache is what lets the next run resume instead of starting over,
+      # which is the only way through a daily free-tier limit. Metrics are different, and
+      # are committed only when the run finished, so a thinned matrix cannot be published.
+      - name: Commit the answers the model gave
+        if: always() && inputs.commit
         run: |
           git config user.name "tare-bot"
           git config user.email "tare-bot@users.noreply.github.com"
-          git add data/llm_cache.json docs/attack_metrics.json docs/attack_lab_demo.json \
+          git add data/llm_cache.json
+          if git diff --cached --quiet; then
+            echo "no new answers to keep"
+          else
+            n=$(python -c "import json;print(len(json.load(open('data/llm_cache.json'))))")
+            git commit -m "Cache $n model answers from the attack suite ($ATTACKS, ${LLM_MODEL})"
+            git pull --rebase -q origin main || true
+            git push
+            echo "kept the cache at $n answers"
+          fi
+
+      - name: Commit the measurement
+        if: success() && inputs.commit
+        run: |
+          git add docs/attack_metrics.json docs/attack_lab_demo.json \
                   web/public/attack_metrics.json web/public/attack_lab_demo.json
           if git diff --cached --quiet; then
             echo "nothing changed"
@@ -88,5 +106,6 @@ jobs:
             git commit -m "Measure the attack suite: $ATTACKS over $GATES
 
           Model ${LLM_MODEL}, real scenario bank, run by the attack-suite workflow."
+            git pull --rebase -q origin main || true
             git push
           fi
