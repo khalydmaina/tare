@@ -36,7 +36,7 @@ Deadline: 21 Sep 2026, 23:59 UTC+8. Fields follow the Google Form. Anything in `
 2. Positions that hit take-profit, stop-loss or the 12-hour limit are closed and recorded; shadow outcomes update the calibration record.
 3. The SMC scanner looks for a liquidity sweep, displacement and a return to the zone on the latest closed candle.
 4. The LLM proposes take or skip with a probability.
-5. The Inspector checks hard limits, tampering signals (injected instructions, fake crowds, prices that disagree with OKX, stale feeds), re-asks without the news, looks up the calibrated probability for that confidence range, and sizes with quarter Kelly capped at 1% risk.
+5. The Inspector checks hard limits, tampering signals (injected instructions, fake crowds, prices that disagree with OKX, stale feeds), re-asks without the news, and looks up the calibrated probability for that confidence range. If the record beats breakeven there it sizes with quarter Kelly capped at 1% risk. If it has fewer than 20 outcomes at that confidence there is nothing to size from, so the trade is exploration instead: a quarter of base risk, twice a day, and only on inputs the tampering checks find quiet, because confidence steering aims at exactly those unmeasured buckets. Once a bucket has 20 outcomes and still shows no edge, it is vetoed.
 6. Approved or shrunk trades are filled with their stop-loss and take-profit attached, priced off the same public candles the outcome labeler walks; every take, approved or not, also opens in the shadow book. The same order code places real orders on the Bitget demo exchange (`scripts/check_bitget_demo.py`), which is how that path stays verified.
 7. Everything lands in the Flight Recorder, the paper log, the dashboard and the website.
 

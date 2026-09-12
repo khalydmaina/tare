@@ -48,6 +48,11 @@ gate:
     enabled: true
     risk: 0.0025      # a quarter of base_risk
     max_per_day: 2
+    # Exploration only on quiet inputs. Measured on the 40-scenario eval set: clean setups
+    # that reached a probe scored 0.31-0.41 (the M1 soft check alone), while A4's steered
+    # ones scored 0.60-0.66 (S2, M1 and M2 together). 0.5 sits in that gap. It is a
+    # threshold picked on that sample, so it needs rechecking as the eval set grows.
+    max_anomaly: 0.5
   min_risk: 0.002
 
 smc:
