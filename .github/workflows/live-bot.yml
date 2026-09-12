@@ -4,7 +4,10 @@ name: Live paper bot
 # paper-log branch (one commit, force-pushed), so runs pick up where the last one stopped.
 on:
   schedule:
-    - cron: "*/15 * * * *"
+    # GitHub runs about one scheduled trigger in twelve on this account, so the every-15-minute
+    # cadence comes from an outside scheduler calling the site's /api/tick. This hourly entry is
+    # only a safety net for when that scheduler is down.
+    - cron: "9 * * * *"
   workflow_dispatch:
 
 permissions:
