@@ -243,7 +243,7 @@ def run_cycle(
     )
     if closed["shadow"]:
         snapshot_calibration(rec, cal)
-    stats = {"setups": 0, "takes": 0, "orders": 0, "already_processed": 0,
+    stats = {"setups": 0, "takes": 0, "orders": 0, "already_processed": 0, "model_failed": 0,
              "closed_guarded": closed["guarded"], "closed_shadow": closed["shadow"],
              "feeds_failed": len(market["symbols"]) - len(feeds)}
     account = broker.account.to_account_state()
@@ -291,11 +291,18 @@ def run_cycle(
                 return trader.propose(setup, tfs, dig, indicators)
 
             proposal = ask(digest)
+            # A dead key or a spent quota returns an empty proposal the Inspector then
+            # vetoes, which reads like an ordinary veto. Count it so it cannot hide.
+            if proposal.invalid_output:
+                stats["model_failed"] += 1
+                log.warning("%s: the model did not answer (%s)", symbol, proposal.rationale)
             pid = rec.insert_proposal(setup_id, proposal)
 
             # M2 ablation probe: same setup, sentiment stripped. One extra call,
             # only when the Trader wants to take (skips need no second opinion).
             ablation = ask(NO_SENTIMENT) if ablation_on and proposal.action == Action.TAKE else None
+            if ablation is not None and ablation.invalid_output:
+                stats["model_failed"] += 1
 
             ctx = GateContext(
                 account=account,
@@ -505,9 +512,13 @@ def main() -> None:
             if stats["feeds_failed"]:
                 log.warning("%d of %d symbols had no market data this cycle",
                             stats["feeds_failed"], n_symbols)
-            last["ok"] = stats["feeds_failed"] < n_symbols
+            # A cycle that found setups but got no answer for any of them is a failed
+            # cycle, not a quiet one: the run should go red and the health line say why.
+            mute = stats["setups"] > 0 and stats["model_failed"] >= stats["setups"]
+            last["ok"] = stats["feeds_failed"] < n_symbols and not mute
+            failed = f", {stats['model_failed']} model calls failed" if stats["model_failed"] else ""
             set_health(f"{stamp}: {n_symbols - stats['feeds_failed']}/{n_symbols} feeds ok, "
-                       f"{stats['setups']} setups, {stats['orders']} orders")
+                       f"{stats['setups']} setups, {stats['orders']} orders{failed}")
         except Exception:
             last["ok"] = False
             log.exception("cycle failed")

@@ -206,3 +206,25 @@ def test_the_same_closed_bar_is_never_traded_twice(live, tmp_path):
     path = tmp_path / "state.json"
     run_live.save_state(path, ns.broker, ns.shadow, processed)
     assert run_live.load_processed_bars(path) == processed
+
+
+def test_a_failed_model_call_is_counted_not_passed_off_as_a_veto(live, monkeypatch):
+    """A spent quota returns an empty proposal the gate vetoes, which reads like a normal veto."""
+    ns = live
+    _load_feeds(ns, last_open=ns.t0)
+
+    def dead_model(setup, tfs, digest, indicators=None):
+        p = ns.trader.propose_mock(setup, confidence=0, action="skip")
+        p.invalid_output = True
+        p.rationale = "invalid_output: 429 quota exhausted"
+        return p
+
+    monkeypatch.setattr(ns.trader, "propose", dead_model)
+    stats = run_live.run_cycle(
+        ns.cfg, ns.rec, ns.trader, ns.cal, ns.trader_feed, ns.ref_feed, ns.sentiment,
+        ns.broker, ns.shadow, "G1", mock_llm=False, now=ns.t0 + timedelta(seconds=1),
+    )
+
+    assert stats["setups"] == 1 and stats["model_failed"] == 1
+    assert stats["takes"] == 0 and stats["orders"] == 0
+    assert ns.rec.fetch_recent_decisions(1), "the refusal is still recorded, just not as a skip"
