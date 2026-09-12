@@ -42,6 +42,45 @@ def first(data: Any) -> dict:
     return (data[0] if isinstance(data, list) and data else data) or {}
 
 
+def compare_prices(broker: PaperBroker) -> int:
+    """Demo-environment last price against the public market, per watchlist symbol.
+
+    The bot reads candles from the public market unauthenticated and sends orders to the
+    demo environment with the paptrading header. If those two disagree, a stop computed
+    from public candles can sit on the wrong side of the demo price, and a fill on the
+    demo book cannot be scored against public candles.
+    """
+    from core.config import load_settings
+
+    symbols = load_settings()["market"]["symbols"]
+    print(f"\ndemo price vs public market, {len(symbols)} symbols:")
+    rows = []
+    for sym in symbols:
+        try:
+            public = float(first(httpx.get(
+                f"{broker.BASE}/api/v2/mix/market/ticker",
+                params={"symbol": sym, "productType": PRODUCT}, timeout=20,
+            ).json().get("data"))["lastPr"])
+            demo = float(first(broker._get(
+                "/api/v2/mix/market/ticker", {"symbol": sym, "productType": PRODUCT}
+            ))["lastPr"])
+        except Exception as exc:
+            print(f"  {sym}: could not compare ({explain(exc)})")
+            continue
+        gap = (demo - public) / public * 100 if public else float("nan")
+        rows.append(abs(gap))
+        print(f"  {sym:10} public {public:>14.6g}  demo {demo:>14.6g}  {gap:+7.2f}%")
+    if rows:
+        worst = max(rows)
+        print(f"largest absolute gap {worst:.2f}% across {len(rows)} symbols")
+        if worst > 0.25:
+            print("the demo environment is NOT quoting the public market: orders priced from "
+                  "public candles will be rejected or filled at unrelated prices")
+            return 1
+        print("demo and public prices agree")
+    return 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Check the Bitget demo API keys")
     parser.add_argument("--symbol", default="DOGEUSDT", help="contract for the test order")
@@ -50,6 +89,8 @@ def main() -> int:
                         help="test order size in USDT (default the contract minimum)")
     parser.add_argument("--side", choices=("long", "short"), default="long",
                         help="direction of the test order")
+    parser.add_argument("--compare-prices", action="store_true",
+                        help="compare demo-environment prices against the public market")
     args = parser.parse_args()
     symbol = args.symbol.upper()
 
@@ -92,6 +133,10 @@ def main() -> int:
         print(f"old-style demo futures: could not read ({explain(exc)})")
     print(f"{symbol}: position mode {acct.get('posMode')}, margin mode {acct.get('marginMode')}, "
           f"cross leverage {acct.get('crossedMarginLeverage')}")
+    if args.compare_prices:
+        if compare_prices(broker) != 0:
+            return 1
+
     if not args.order:
         print("read-only check passed")
         return 0
