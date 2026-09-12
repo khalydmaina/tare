@@ -8,7 +8,12 @@ llm:
   prompt_version: "trader_v2"   # trader/prompts/<version>.txt; v2 fixes SL/TP to the SMC setup
 
 market:
-  symbols: [BTCUSDT, ETHUSDT, SOLUSDT, XRPUSDT, DOGEUSDT, BNBUSDT, ADAUSDT, AVAXUSDT, LINKUSDT, LTCUSDT]
+  # Crypto perpetuals listed on Bitget and OKX both (scripts/list_symbols.py), by turnover.
+  # Bitget's tokenized stock and commodity perps are deliberately left out: they stop trading
+  # at the closing bell, which breaks a 24/7 setup finder and the volatility regime with it.
+  symbols: [BTCUSDT, ETHUSDT, SOLUSDT, XRPUSDT, DOGEUSDT, BNBUSDT, ADAUSDT, AVAXUSDT, LINKUSDT, LTCUSDT,
+            ZECUSDT, HYPEUSDT, SUIUSDT, NEARUSDT, ENAUSDT, PEPEUSDT, UNIUSDT, WLDUSDT, ONDOUSDT,
+            ARBUSDT, TAOUSDT, DOTUSDT]
   entry_tf: 15m
   bias_tfs: [1h, 4h]
   reference_venue: "okx"   # second venue for C1 (okx | binance | bybit); Binance and Bybit refuse US-hosted servers
