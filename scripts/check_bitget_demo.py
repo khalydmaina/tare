@@ -46,6 +46,10 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Check the Bitget demo API keys")
     parser.add_argument("--symbol", default="DOGEUSDT", help="contract for the test order")
     parser.add_argument("--order", action="store_true", help="open and close one minimum-size demo position")
+    parser.add_argument("--notional", type=float, default=TEST_NOTIONAL_USDT,
+                        help="test order size in USDT (default the contract minimum)")
+    parser.add_argument("--side", choices=("long", "short"), default="long",
+                        help="direction of the test order")
     args = parser.parse_args()
     symbol = args.symbol.upper()
 
@@ -92,17 +96,22 @@ def main() -> int:
         print("read-only check passed")
         return 0
 
-    # 2. One minimum-size long through the bot's own open request, then close it
+    # 2. One test order through the bot's own open request, then close it
+    side = Side.LONG if args.side == "long" else Side.SHORT
     try:
         price = float(first(broker._get("/api/v2/mix/market/ticker", {"symbol": symbol, "productType": PRODUCT}))["lastPr"])
         spec = broker._contract_spec(symbol)
-        size = max(exchange_size(TEST_NOTIONAL_USDT / price, spec), spec["min_trade_num"])
-        sl, tp = price * 0.97, price * 1.03
-        fill, oid, qty = broker._place_api_order(symbol, Side.LONG, size, sl, tp)
+        size = max(exchange_size(args.notional / price, spec), spec["min_trade_num"])
+        # Stop above and target below for a short, the way the bot sends them
+        sl = price * (1.03 if side == Side.SHORT else 0.97)
+        tp = price * (0.97 if side == Side.SHORT else 1.03)
+        print(f"sending {args.side} {size:g} {symbol} (~{size * price:,.0f} USDT notional), "
+              f"volumePlace {spec['volume_place']:g}, minTradeNum {spec['min_trade_num']:g}")
+        fill, oid, qty = broker._place_api_order(symbol, side, size, sl, tp)
     except Exception as exc:
         print(f"FAILED opening the test position: {explain(exc)}")
         return 1
-    print(f"opened long {qty} {symbol} at {fill} (order {oid}); stop {sl:.6g}, target {tp:.6g}")
+    print(f"opened {args.side} {qty} {symbol} at {fill} (order {oid}); stop {sl:.6g}, target {tp:.6g}")
 
     ok = True
     time.sleep(3)
@@ -124,7 +133,7 @@ def main() -> int:
         ok = False
 
     try:
-        pos = SimpleNamespace(symbol=symbol, side=Side.LONG, size=qty, fill_price=fill)
+        pos = SimpleNamespace(symbol=symbol, side=side, size=qty, fill_price=fill)
         exit_px = broker._close_api_position(pos)  # type: ignore[arg-type]
         print(f"closed at {exit_px}")
     except Exception as exc:
@@ -139,10 +148,10 @@ def main() -> int:
             float(p.get("total") or 0)
             for p in broker._get("/api/v2/mix/position/single-position",
                                  {"symbol": symbol, "productType": PRODUCT, "marginCoin": "USDT"}) or []
-            if p.get("holdSide") == "long"
+            if p.get("holdSide") == args.side
         )
         if left > 0:
-            leftover = SimpleNamespace(symbol=symbol, side=Side.LONG, size=left, fill_price=fill)
+            leftover = SimpleNamespace(symbol=symbol, side=side, size=left, fill_price=fill)
             print(f"closing {left:g} {symbol} left from an earlier check at "
                   f"{broker._close_api_position(leftover)}")  # type: ignore[arg-type]
         print("no test position left open")

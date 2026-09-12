@@ -25,6 +25,42 @@ logger = logging.getLogger(__name__)
 SideLike = Union[Side, str]
 
 
+class BitgetError(RuntimeError):
+    """A rejected Bitget request, carrying the reason Bitget gave for it.
+
+    Bitget answers a business rejection with an HTTP error whose body holds the only
+    useful part (its own code and message), so raise_for_status on its own throws the
+    reason away and every failure ends up looking the same in the log.
+    """
+
+    def __init__(self, message: str, *, status: Optional[int] = None, code: str = "", msg: str = "") -> None:
+        super().__init__(message)
+        self.status = status
+        self.code = code
+        self.msg = msg
+
+
+def _raise_for_body(response: httpx.Response, path: str) -> None:
+    """Turn an HTTP error into a BitgetError that quotes the response body."""
+    if response.is_success:
+        return
+    code = msg = ""
+    try:
+        body = response.json()
+        if isinstance(body, dict):
+            code = str(body.get("code") or "")
+            msg = str(body.get("msg") or body.get("message") or "")
+        detail = json.dumps(body)[:300]
+    except Exception:
+        detail = response.text[:300]
+    raise BitgetError(
+        f"HTTP {response.status_code} from {path}: {detail}",
+        status=response.status_code,
+        code=code,
+        msg=msg,
+    )
+
+
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
@@ -271,6 +307,8 @@ class PaperBroker:
         self.account = account or PaperModeAccount(starting_equity)
         self._use_api = bool(self.api_key and self.api_secret and self.passphrase)
         self._specs: dict[str, dict[str, float]] = {}
+        # Exchange rejections this process fell back to simulation for.
+        self.api_failures: list[dict[str, str]] = []
 
     def _headers(self, method: str, path: str, body: str = "") -> dict[str, str]:
         ts = str(int(time.time() * 1000))
@@ -295,10 +333,15 @@ class PaperBroker:
         headers = self._headers("POST", path, body_str)
         with httpx.Client(timeout=self.timeout) as client:
             r = client.post(f"{self.BASE}{path}", content=body_str, headers=headers)
-            r.raise_for_status()
+            _raise_for_body(r, path)
             data = r.json()
         if isinstance(data, dict) and data.get("code") not in (None, "00000"):
-            raise RuntimeError(f"Bitget error: {data}")
+            raise BitgetError(
+                f"Bitget rejected {path}: {json.dumps(data)[:300]}",
+                status=r.status_code,
+                code=str(data.get("code") or ""),
+                msg=str(data.get("msg") or ""),
+            )
         return data.get("data", data) if isinstance(data, dict) else data
 
     def _get(self, path: str, params: Optional[dict] = None) -> Any:
@@ -308,10 +351,15 @@ class PaperBroker:
         headers = self._headers("GET", path + q)
         with httpx.Client(timeout=self.timeout) as client:
             r = client.get(f"{self.BASE}{path}", params=params, headers=headers)
-            r.raise_for_status()
+            _raise_for_body(r, path)
             data = r.json()
         if isinstance(data, dict) and data.get("code") not in (None, "00000"):
-            raise RuntimeError(f"Bitget error: {data}")
+            raise BitgetError(
+                f"Bitget rejected {path}: {json.dumps(data)[:300]}",
+                status=r.status_code,
+                code=str(data.get("code") or ""),
+                msg=str(data.get("msg") or ""),
+            )
         return data.get("data", data) if isinstance(data, dict) else data
 
     def _sim_fill_price(
@@ -351,6 +399,7 @@ class PaperBroker:
         exchange_order_id: Optional[str] = None
         mode = "sim"
         fill_price: Optional[float] = None
+        api_error = ""
 
         if self._use_api:
             try:
@@ -359,7 +408,11 @@ class PaperBroker:
                 )
                 mode = "api"
             except Exception as exc:
-                logger.warning("Bitget paper API place failed (%s); simulating fill", exc)
+                # Keep trading on a simulated fill, but carry the reason with the order:
+                # a fill that never reached the exchange must not read like one that did.
+                api_error = str(exc)[:300]
+                self.api_failures.append({"symbol": bg_symbol, "error": api_error, "ts": _utcnow().isoformat()})
+                logger.warning("Bitget paper API place failed (%s); simulating fill", api_error)
 
         if fill_price is None:
             fill_price = self._sim_fill_price(
@@ -381,7 +434,7 @@ class PaperBroker:
             fees=fees,
             opened_at=_utcnow(),
             exchange_order_id=exchange_order_id,
-            meta={"mode": mode, "proposed_entry": float(entry)},
+            meta={"mode": mode, "proposed_entry": float(entry), **({"api_error": api_error} if api_error else {})},
         )
         self.account.register_open(pos)
         record = {
@@ -399,6 +452,8 @@ class PaperBroker:
             "status": "open",
             "ts": pos.opened_at.isoformat(),
         }
+        if api_error:
+            record["api_error"] = api_error
         self.account.order_log.append(record)
         logger.info(
             "order placed id=%s fill=%.6f fees=%.6f mode=%s side=%s size=%s",
