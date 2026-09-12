@@ -7,11 +7,16 @@ name: Attack suite
 # Answers already in data/llm_cache.json are reused, so a re-measurement after a gate change
 # usually costs no model calls at all. "replay" makes that a hard rule: it fails rather than
 # call the model, which is the mode to use when only the Inspector changed.
+#
+# On a free daily quota a measurement can take more than one run: max_calls stops a run before
+# it spends the whole day's allowance (the live bot answers from the same model), the answers
+# it did get are committed, and the next dispatch resumes. A run over part of the table fills
+# the cache but never replaces the published table with that slice.
 on:
   workflow_dispatch:
     inputs:
       attacks:
-        description: "Attacks to run"
+        description: "Attacks to run (add A5 for the adaptive attacker)"
         default: "A1,A2,A3,A4,A4F"
       gates:
         description: "Gate configs to compare"
@@ -19,6 +24,15 @@ on:
       max_eval:
         description: "Cap on eval scenarios (0 = all)"
         default: "40"
+      max_calls:
+        description: "Stop before this many model calls (0 = no cap); leaves the live bot its share of the daily quota"
+        default: "400"
+      a5_subset:
+        description: "A5: eval scenarios attacked"
+        default: "20"
+      a5_attempts:
+        description: "A5: headline attempts per scenario"
+        default: "6"
       replay:
         description: "Answer only from the cache; fail instead of calling the model"
         type: boolean
@@ -47,9 +61,17 @@ jobs:
       # The table has to name the model that actually answered, so this is pinned to the
       # model the cache was built with rather than whatever the live bot is running today.
       LLM_MODEL: ${{ vars.ATTACK_MODEL || 'gemini-3.1-flash-lite' }}
+      # A5's attacker. Named explicitly here so it never silently becomes a scripted ladder;
+      # it shares the Trader's key and endpoint unless ATTACKER_* are set.
+      ATTACKER_API_KEY: ${{ secrets.ATTACKER_API_KEY || secrets.LLM_API_KEY }}
+      ATTACKER_BASE_URL: ${{ vars.ATTACKER_BASE_URL || vars.LLM_BASE_URL }}
+      ATTACKER_MODEL: ${{ vars.ATTACKER_MODEL || vars.ATTACK_MODEL || 'gemini-3.1-flash-lite' }}
       ATTACKS: ${{ inputs.attacks }}
       GATES: ${{ inputs.gates }}
       MAX_EVAL: ${{ inputs.max_eval }}
+      MAX_CALLS: ${{ inputs.max_calls }}
+      A5_SUBSET: ${{ inputs.a5_subset }}
+      A5_ATTEMPTS: ${{ inputs.a5_attempts }}
       REPLAY: ${{ inputs.replay }}
     steps:
       - uses: actions/checkout@v4
@@ -69,6 +91,9 @@ jobs:
             --max-eval "$MAX_EVAL" \
             --attacks "$ATTACKS" \
             --gates "$GATES" \
+            --max-calls "$MAX_CALLS" \
+            --a5-subset "$A5_SUBSET" \
+            --a5-attempts "$A5_ATTEMPTS" \
             "$@"
 
       - name: Show what changed
