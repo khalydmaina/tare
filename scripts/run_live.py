@@ -243,7 +243,7 @@ def run_cycle(
     )
     if closed["shadow"]:
         snapshot_calibration(rec, cal)
-    stats = {"setups": 0, "takes": 0, "orders": 0, "already_processed": 0, "model_failed": 0,
+    stats = {"setups": 0, "takes": 0, "orders": 0, "probes": 0, "already_processed": 0, "model_failed": 0,
              "closed_guarded": closed["guarded"], "closed_shadow": closed["shadow"],
              "feeds_failed": len(market["symbols"]) - len(feeds)}
     account = broker.account.to_account_state()
@@ -315,6 +315,7 @@ def run_cycle(
                 sentiment_history_scores=behavior.sentiment_history(),
                 ablation_confidence=ablation.confidence if ablation else None,
                 ablation_action=ablation.action.value if ablation else None,
+                probes_today=broker.account.probes_today,
                 as_of=now,
             )
             decision = decide(proposal, ctx, settings, limits, cal, gate_config=gate_config)
@@ -369,6 +370,12 @@ def run_cycle(
                 broker.account.positions[order["order_id"]].meta.update(
                     {"db_id": oid, "proposal_id": pid, "decision_id": did}
                 )
+                # Spend the probe budget only when the exploration trade actually opened.
+                if decision.reason == "probe_uncalibrated":
+                    broker.account.probes_today += 1
+                    stats["probes"] += 1
+                    log.info("%s: probe at %.3f%% risk, this bucket is not measured yet",
+                             symbol, decision.risk_frac * 100)
                 account = broker.account.to_account_state()
                 stats["orders"] += 1
 
@@ -539,8 +546,9 @@ def main() -> None:
             last["ok"] = stats["feeds_failed"] < n_symbols and not mute and not rejected
             failed = f", {stats['model_failed']} model calls failed" if stats["model_failed"] else ""
             refused = f", SIMULATED FILL: bitget refused the order ({rejected})" if rejected else ""
+            probes = f" ({stats['probes']} probe)" if stats["probes"] else ""
             set_health(f"{stamp}: {n_symbols - stats['feeds_failed']}/{n_symbols} feeds ok, "
-                       f"{stats['setups']} setups, {stats['orders']} orders{failed}{refused}")
+                       f"{stats['setups']} setups, {stats['orders']} orders{probes}{failed}{refused}")
         except Exception:
             last["ok"] = False
             log.exception("cycle failed")

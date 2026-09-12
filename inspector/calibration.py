@@ -112,13 +112,21 @@ class CalibrationMatrix:
 
     def lookup(self, confidence: int, regime: str) -> float:
         """Conservative p_cal: cell Wilson → bucket Wilson → prior_p."""
+        return self.lookup_with_evidence(confidence, regime)[0]
+
+    def lookup_with_evidence(self, confidence: int, regime: str) -> tuple[float, str, int]:
+        """p_cal plus where it came from: ``cell``, ``bucket`` or ``prior``, and its n.
+
+        The gate has to tell "measured, and the answer is no" apart from "nothing measured
+        yet": the first is a veto, the second is only an absence of evidence.
+        """
         bucket = confidence_bucket(confidence, self.buckets)
         if bucket is None:
-            return self.prior_p
+            return self.prior_p, "prior", 0
 
         cell = self.get_cell(bucket, regime)
         if cell.n >= self.min_n:
-            return cell.wilson(self.z)
+            return cell.wilson(self.z), "cell", cell.n
 
         bucket_n = 0
         bucket_wins = 0
@@ -127,9 +135,9 @@ class CalibrationMatrix:
             bucket_n += c.n
             bucket_wins += c.wins
         if bucket_n >= self.min_n:
-            return wilson_lower(bucket_wins, bucket_n, z=self.z)
+            return wilson_lower(bucket_wins, bucket_n, z=self.z), "bucket", bucket_n
 
-        return self.prior_p
+        return self.prior_p, "prior", bucket_n
 
     def update(self, confidence: int, regime: str, won: bool) -> None:
         if self.frozen:

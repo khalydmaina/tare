@@ -192,9 +192,57 @@ def test_decide_veto_anomaly_injection(settings, limits, calibration):
     assert "S1" in d.anomaly_breakdown.hard_triggers
 
 
-def test_decide_veto_no_edge(settings, limits):
-    # Empty calibration → prior_p=0.35; with rr=1.5, p_be≈0.4, need 0.43
+def test_no_edge_in_an_unmeasured_bucket_is_probed_not_vetoed(settings, limits):
+    """An absence of evidence is not evidence of no edge.
+
+    Empty calibration → prior_p=0.35; with rr=1.5, p_be≈0.4, so the gate needs 0.43 and
+    has no reason to believe it. Vetoing would also be self-sealing: the matrix only fills
+    from outcomes, so the bucket would stay unmeasured forever. It takes a probe instead.
+    """
     cal = CalibrationMatrix(prior_p=0.35, min_n=20)
+    d = decide(
+        _proposal(confidence=70, rr=1.5, tp=101.5),
+        _ctx(),
+        settings,
+        limits,
+        cal,
+        gate_config="G1",
+    )
+    assert d.kind == DecisionKind.SHRINK
+    assert d.reason == "probe_uncalibrated"
+    assert d.risk_frac == pytest.approx(settings["gate"]["probe"]["risk"])
+    assert d.risk_frac < settings["gate"]["base_risk"]
+    assert d.size > 0
+    assert d.p_adj is not None and d.p_be is not None
+    assert d.p_adj < d.p_be + settings["gate"]["edge_margin"]
+
+
+def test_the_probe_budget_is_spent_once_a_day(settings, limits):
+    cal = CalibrationMatrix(prior_p=0.35, min_n=20)
+    spent = settings["gate"]["probe"]["max_per_day"]
+    d = decide(
+        _proposal(confidence=70, rr=1.5, tp=101.5),
+        _ctx(probes_today=spent),
+        settings,
+        limits,
+        cal,
+        gate_config="G1",
+    )
+    assert d.kind == DecisionKind.VETO
+    assert d.reason == "uncalibrated_no_probe_left"
+
+
+def test_a_measured_bucket_with_no_edge_is_vetoed_outright(settings, limits):
+    """Once min_n outcomes exist and they say no, the veto is real and no probe applies."""
+    cal = CalibrationMatrix(prior_p=0.35, min_n=20)
+    for _ in range(25):
+        cal.update(70, "mid", won=False)
+    for _ in range(7):
+        cal.update(70, "mid", won=True)
+
+    p_cal, source, n = cal.lookup_with_evidence(70, "mid")
+    assert source == "cell" and n >= 20 and p_cal < 0.35
+
     d = decide(
         _proposal(confidence=70, rr=1.5, tp=101.5),
         _ctx(),
@@ -205,8 +253,6 @@ def test_decide_veto_no_edge(settings, limits):
     )
     assert d.kind == DecisionKind.VETO
     assert d.reason == "no_calibrated_edge"
-    assert d.p_adj is not None and d.p_be is not None
-    assert d.p_adj < d.p_be + settings["gate"]["edge_margin"]
 
 
 def test_g0_approves_take(settings, limits, calibration):

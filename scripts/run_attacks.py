@@ -143,18 +143,43 @@ def cache_key(trader: LLMTrader, payload: str) -> str:
     return hashlib.sha256("\n\x1f".join(parts).encode("utf-8")).hexdigest()
 
 
-def make_propose_fn(mode: str, settings: dict, cache_path: Path | None):
+def make_propose_fn(mode: str, settings: dict, cache_path: Path | None, cache_only: bool = False):
     base = LLMTrader(settings)
     if mode == "sim":
         sim = SimTrader(base)
         return (lambda setup, tfs, digest: sim.propose(setup, tfs, digest)), "sim"
 
-    if base._client is None:
+    if base._client is None and not cache_only:
         sys.exit("--llm real needs XAI_API_KEY (or the key named in llm.api_key_env)")
 
     cache: dict[str, dict] = {}
     if cache_path and cache_path.exists():
         cache = json.loads(cache_path.read_text())
+
+    if cache_only:
+        # Replaying a past run's answers to re-measure the gate after a policy change,
+        # without spending quota. A miss is counted, never invented, and main() refuses to
+        # write metrics if any occurred.
+        misses = {"n": 0}
+
+        def propose_cached(setup: Setup, tfs: dict, digest: str):
+            b_setup, b_tfs, _ = blind_bundle(setup, {k: list(v) for k, v in tfs.items()})
+            b_tfs = {k: v[-30:] for k, v in b_tfs.items()}
+            indicators = {"setup_score": setup.setup_score, "bias": setup.bias}
+            key = cache_key(base, build_user_payload(b_setup, b_tfs, digest, indicators))
+            raw = cache.get(key)
+            if raw is None:
+                misses["n"] += 1
+                p = base.propose_mock(setup, confidence=0, action="skip")
+                p.invalid_output = True
+                return p
+            p = base.propose_mock(setup, confidence=raw["confidence"], action=raw["action"])
+            p.rationale = raw.get("rationale", "")
+            return p
+
+        propose_cached.misses = misses  # type: ignore[attr-defined]
+        return propose_cached, f"{base.model}@{base.base_url} (cached)"
+
     # A rate limit or a dead key makes every proposal an empty skip. Without this the run
     # finishes "fine" on a calibration built from nothing.
     failures = {"streak": 0}
@@ -212,6 +237,9 @@ def main() -> None:
     ap.add_argument("--a5-subset", type=int, default=20)
     ap.add_argument("--a5-attempts", type=int, default=10)
     ap.add_argument("--no-background", action="store_true")
+    ap.add_argument("--cache-only", action="store_true",
+                    help="answer only from data/llm_cache.json; never call the model. Reports "
+                         "what is missing and refuses to write metrics from a partial cache")
     ap.add_argument("--save-calibration", action="store_true",
                     help="Also write the walk-forward matrix to data/calibration.json")
     ap.add_argument("--out", default=str(ROOT / "docs" / "attack_metrics.json"))
@@ -228,7 +256,8 @@ def main() -> None:
         eval_set = eval_set[: args.max_eval]
 
     propose, trader_label = make_propose_fn(
-        args.llm, cfg.settings, ROOT / "data" / "llm_cache.json" if args.llm == "real" else None
+        args.llm, cfg.settings, ROOT / "data" / "llm_cache.json" if args.llm == "real" else None,
+        cache_only=args.cache_only,
     )
 
     cal = CalibrationMatrix.from_settings(cfg.settings)
@@ -261,6 +290,10 @@ def main() -> None:
                          "eval_scenarios": len(eval_set),
                          "scenario_source": args.scenarios or "synthetic",
                          "generated_at": datetime.now(timezone.utc).isoformat()})
+    missed = getattr(propose, "misses", {}).get("n", 0) if args.cache_only else 0
+    if missed:
+        sys.exit(f"{missed} proposals were not in the cache, so this replay is incomplete and "
+                 "nothing was written. Run without --cache-only to fill them in.")
     save_metrics(metrics, args.out)
 
     # Attack Lab demo: first 3 eval scenarios, real rows and real checks

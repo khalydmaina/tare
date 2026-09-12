@@ -201,6 +201,8 @@ class GateContext(BaseModel):
     trailing_confidences: list[tuple[float, int]] = Field(default_factory=list)
     # (setup_score, confidence) recent takes for M1
     sentiment_history_scores: list[float] = Field(default_factory=list)
+    probes_today: int = 0
+    # Minimum-risk exploration trades already taken today, against gate.probe.max_per_day.
     ablation_confidence: Optional[int] = None
     # Trader re-run on the same setup with ALL sentiment stripped (M2 probe).
     ablation_action: Optional[str] = None

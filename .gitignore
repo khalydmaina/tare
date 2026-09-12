@@ -22,10 +22,13 @@ data/*.tmp
 data/mock/
 data/live_state.json
 data/behavior_state.json
-data/scenarios.jsonl
 attacks/_generated/
 backtest/_cache/
-data/llm_cache.json
+
+# The scenario bank and the model's cached answers are evidence, not runtime junk: the
+# numbers in docs/RESULTS.md are only checkable if the setups they were measured on and
+# the answers the model gave are both in the repo. They also let the attack suite be
+# replayed without spending quota (run_attacks.py --cache-only).
 
 # misc
 .DS_Store
