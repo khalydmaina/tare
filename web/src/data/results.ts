@@ -64,7 +64,8 @@ export function useResults(): Results {
 }
 
 export function sourceLabel(r: Results): string {
-  if (r.source === 'measured') return `Measured · ${r.trader}`
+  // trader is "model@endpoint"; the endpoint is noise on a badge
+  if (r.source === 'measured') return `Measured · ${r.trader.split('@')[0]}`
   if (r.source === 'sim') return 'Simulated trader · not evidence'
   return 'Demo data · not measured'
 }
