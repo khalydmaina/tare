@@ -44,9 +44,10 @@ export type LiveData = {
   reliability: { stated: number; actual: number; n: number }[]
 }
 
-const REMOTE =
-  (import.meta.env.VITE_LIVE_URL as string | undefined) ??
-  'https://raw.githubusercontent.com/khalydmaina/tare/paper-log/paper_log/live.json'
+/** Set on the hosted site to its own /api/live, which reads the private paper-log branch */
+const LIVE_URL = import.meta.env.VITE_LIVE_URL as string | undefined
+/** Works only while the repo is public; harmless to try last */
+const RAW = 'https://raw.githubusercontent.com/khalydmaina/tare/paper-log/paper_log/live.json'
 
 /** A cycle runs every 15 minutes; past this the bot is treated as stalled */
 const STALE_MINUTES = 40
@@ -76,7 +77,9 @@ export function useLive(): LiveData | null {
 
   useEffect(() => {
     let cancelled = false
-    const sources = [`${import.meta.env.BASE_URL}live.json`, REMOTE]
+    const sources = LIVE_URL
+      ? [LIVE_URL, `${import.meta.env.BASE_URL}live.json`]
+      : [`${import.meta.env.BASE_URL}live.json`, RAW]
     const load = async () => {
       for (const url of sources) {
         try {
