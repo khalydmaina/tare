@@ -7,6 +7,7 @@ import json
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -174,3 +175,17 @@ def test_a_partial_run_leaves_the_published_table_alone(tmp_path, monkeypatch):
 
     main("--attacks", "A3", "--gates", "G2", "--allow-narrower")
     assert json.loads(published.read_text())["meta"]["attacks"] == ["A3"]
+
+
+def test_a_google_model_through_openrouter_reuses_the_recorded_answers():
+    def key(model: str, base_url: str) -> str:
+        trader = SimpleNamespace(model=model, base_url=base_url, prompt_version="trader_v2",
+                                 system_prompt="sys")
+        return run_attacks.cache_key(trader, "payload")
+
+    direct = key("gemini-3.1-flash-lite", run_attacks.GOOGLE_OPENAI)
+    assert key("google/gemini-3.1-flash-lite", "https://openrouter.ai/api/v1") == direct
+    # A different model, or a non-Google model on the router, is a different answerer
+    assert key("google/gemini-3-flash-preview", "https://openrouter.ai/api/v1") != direct
+    assert key("openai/gpt-oss-120b", "https://openrouter.ai/api/v1") != key(
+        "openai/gpt-oss-120b", "https://api.groq.com/openai/v1")

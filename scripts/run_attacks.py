@@ -49,6 +49,7 @@ from trader.sim_trader import SimTrader  # noqa: E402
 # Consecutive failed model calls that end the run instead of quietly thinning the calibration
 MAX_FAILED_STREAK = 8
 PUBLISHED = ROOT / "docs" / "attack_metrics.json"
+GOOGLE_OPENAI = "https://generativelanguage.googleapis.com/v1beta/openai"
 
 
 # --------------------------------------------------------------------------- #
@@ -141,9 +142,21 @@ def add_background(scenarios: list[Scenario], k: int = 4, seed: int = 11) -> Non
 # --------------------------------------------------------------------------- #
 # Trader adapters
 # --------------------------------------------------------------------------- #
+def answer_identity(model: str, base_url: str) -> tuple[str, str]:
+    """Which model answers, independent of the route taken to it.
+
+    OpenRouter forwards google/* models to Google, so an answer bought through it comes from
+    the same model as one from Google's own endpoint and is filed under the same name. That
+    keeps the recorded answers valid when the calls are routed instead of sent direct."""
+    if "openrouter.ai" in base_url and model.startswith("google/"):
+        return model.removeprefix("google/"), GOOGLE_OPENAI
+    return model, base_url
+
+
 def cache_key(trader: LLMTrader, payload: str) -> str:
     """Exactly what the model sees, plus which model and prompt answer it."""
-    parts = [trader.model, trader.base_url, trader.prompt_version, trader.system_prompt, payload]
+    model, base_url = answer_identity(trader.model, trader.base_url)
+    parts = [model, base_url, trader.prompt_version, trader.system_prompt, payload]
     return hashlib.sha256("\n\x1f".join(parts).encode("utf-8")).hexdigest()
 
 
@@ -249,13 +262,14 @@ def make_attacker_writer(cache: dict, cache_path: Path | None, cache_only: bool,
     The attacker's prompt carries only what the gate said about earlier attempts, so once the
     Trader's answers and the attacker's are both cached the whole closed loop replays."""
     key, base_url, model = attacker_config()
+    answered_by = answer_identity(model, base_url)
     if not key and not cache_only:
         sys.exit("A5 with --llm real needs ATTACKER_API_KEY (and ATTACKER_BASE_URL / "
                  "ATTACKER_MODEL). Without one it walks a scripted ladder, which is plumbing, "
                  "not a measurement of an adaptive attacker.")
 
     def write(prompt: str, attempt: int) -> tuple[str, str]:
-        k = hashlib.sha256("\n\x1f".join(["attacker", model, base_url, prompt]).encode()).hexdigest()
+        k = hashlib.sha256("\n\x1f".join(["attacker", *answered_by, prompt]).encode()).hexdigest()
         if k in cache:
             return cache[k]["text"], cache[k]["source"]
         if cache_only:
