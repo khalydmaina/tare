@@ -53,19 +53,21 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     env:
-      LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
+      LLM_API_KEY: ${{ contains(vars.LLM_BASE_URL, 'openrouter.ai') && secrets.OPENROUTER_API_KEY || secrets.LLM_API_KEY }}
       # Only read when LLM_BASE_URL points at AgentRouter, which is not OpenAI-compatible.
       AGENTIC_API_KEY: ${{ secrets.AGENTIC_API_KEY }}
       LLM_ROUTE_KEY: ${{ vars.LLM_ROUTE_KEY }}
       LLM_BASE_URL: ${{ vars.LLM_BASE_URL }}
       # The table has to name the model that actually answered, so this is pinned to the
       # model the cache was built with rather than whatever the live bot is running today.
-      LLM_MODEL: ${{ vars.ATTACK_MODEL || 'gemini-3.1-flash-lite' }}
+      # Through OpenRouter the same model is google/gemini-3.1-flash-lite, and its answers share
+      # the cache with Google's endpoint (run_attacks.answer_identity).
+      LLM_MODEL: ${{ vars.ATTACK_MODEL || (contains(vars.LLM_BASE_URL, 'openrouter.ai') && 'google/gemini-3.1-flash-lite' || 'gemini-3.1-flash-lite') }}
       # A5's attacker. Named explicitly here so it never silently becomes a scripted ladder;
       # it shares the Trader's key and endpoint unless ATTACKER_* are set.
-      ATTACKER_API_KEY: ${{ secrets.ATTACKER_API_KEY || secrets.LLM_API_KEY }}
+      ATTACKER_API_KEY: ${{ secrets.ATTACKER_API_KEY || contains(vars.LLM_BASE_URL, 'openrouter.ai') && secrets.OPENROUTER_API_KEY || secrets.LLM_API_KEY }}
       ATTACKER_BASE_URL: ${{ vars.ATTACKER_BASE_URL || vars.LLM_BASE_URL }}
-      ATTACKER_MODEL: ${{ vars.ATTACKER_MODEL || vars.ATTACK_MODEL || 'gemini-3.1-flash-lite' }}
+      ATTACKER_MODEL: ${{ vars.ATTACKER_MODEL || vars.ATTACK_MODEL || (contains(vars.LLM_BASE_URL, 'openrouter.ai') && 'google/gemini-3.1-flash-lite' || 'gemini-3.1-flash-lite') }}
       ATTACKS: ${{ inputs.attacks }}
       GATES: ${{ inputs.gates }}
       MAX_EVAL: ${{ inputs.max_eval }}
