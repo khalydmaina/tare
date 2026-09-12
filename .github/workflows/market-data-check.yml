@@ -49,7 +49,7 @@ jobs:
           NAME="kraken spot";       check "https://api.kraken.com/0/public/OHLC?pair=XBTUSDT&interval=15"
 
       - name: Symbols listed on both venues
-        run: python scripts/list_symbols.py --top 30
+        run: python scripts/list_symbols.py --top 80
 
       - name: One live cycle on real candles (simulated trader)
         run: python scripts/run_live.py --once --mock-llm --gate G2
