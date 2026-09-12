@@ -54,6 +54,8 @@ log = logging.getLogger("tare.live")
 
 NO_SENTIMENT = "(no sentiment items)"
 REGIME_1H_BARS = LOOKBACK_BARS + 20  # 30 days of 1h bars for the ATR% tercile
+FETCH_WORKERS = 4  # 22 coins x 4 calls at once trips Bitget's per-address rate limit
+FETCH_ATTEMPTS = 2
 
 
 def _synth_klines(symbol: str, timeframe: str, limit: int, start: float = 100.0) -> list[Candle]:
@@ -194,17 +196,25 @@ def run_cycle(
     symbols = list(market["symbols"])
 
     def fetch(symbol: str) -> tuple[list[Candle], list[Candle], list[Candle], list[Candle]]:
-        return (
-            bitget.fetch_klines(symbol, entry_tf, limit),
-            bitget.fetch_klines(symbol, "1h", max(limit, REGIME_1H_BARS)),
-            bitget.fetch_klines(symbol, "4h", limit),
-            ref.fetch_klines(symbol, entry_tf, limit),
-        )
+        # Both exchanges rate-limit per address, and one 429 should not cost a coin its cycle
+        for attempt in range(FETCH_ATTEMPTS):
+            try:
+                return (
+                    bitget.fetch_klines(symbol, entry_tf, limit),
+                    bitget.fetch_klines(symbol, "1h", max(limit, REGIME_1H_BARS)),
+                    bitget.fetch_klines(symbol, "4h", limit),
+                    ref.fetch_klines(symbol, entry_tf, limit),
+                )
+            except Exception:
+                if attempt == FETCH_ATTEMPTS - 1:
+                    raise
+                time.sleep(1.5 * (attempt + 1))
+        raise RuntimeError("unreachable")
 
     # Four calls per coin, so the coins run side by side: 25 of them still fit in one cycle
     fetched: dict[str, tuple[list[Candle], list[Candle], list[Candle], list[Candle]]] = {}
     if not offline and symbols:
-        with ThreadPoolExecutor(max_workers=min(8, len(symbols))) as pool:
+        with ThreadPoolExecutor(max_workers=min(FETCH_WORKERS, len(symbols))) as pool:
             pending = {pool.submit(fetch, s): s for s in symbols}
             for done in as_completed(pending):
                 symbol = pending[done]
