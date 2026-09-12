@@ -48,6 +48,9 @@ jobs:
           NAME="coinbase spot";     check "https://api.exchange.coinbase.com/products/BTC-USD/candles?granularity=900"
           NAME="kraken spot";       check "https://api.kraken.com/0/public/OHLC?pair=XBTUSDT&interval=15"
 
+      - name: Symbols listed on both venues
+        run: python scripts/list_symbols.py --top 30
+
       - name: One live cycle on real candles (simulated trader)
         run: python scripts/run_live.py --once --mock-llm --gate G2
 

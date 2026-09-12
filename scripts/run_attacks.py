@@ -43,6 +43,9 @@ from recorder.db import FlightRecorder  # noqa: E402
 from trader.llm_trader import LLMTrader, build_user_payload  # noqa: E402
 from trader.sim_trader import SimTrader  # noqa: E402
 
+# Consecutive failed model calls that end the run instead of quietly thinning the calibration
+MAX_FAILED_STREAK = 8
+
 
 # --------------------------------------------------------------------------- #
 # Scenario loading
@@ -152,6 +155,9 @@ def make_propose_fn(mode: str, settings: dict, cache_path: Path | None):
     cache: dict[str, dict] = {}
     if cache_path and cache_path.exists():
         cache = json.loads(cache_path.read_text())
+    # A rate limit or a dead key makes every proposal an empty skip. Without this the run
+    # finishes "fine" on a calibration built from nothing.
+    failures = {"streak": 0}
 
     def propose(setup: Setup, tfs: dict, digest: str):
         b_setup, b_tfs, _ = blind_bundle(setup, {k: list(v) for k, v in tfs.items()})
@@ -167,10 +173,16 @@ def make_propose_fn(mode: str, settings: dict, cache_path: Path | None):
         # Levels always come from the setup; put the real prices back
         p.entry, p.sl, p.tp = setup.entry, setup.sl, setup.tp
         if not p.invalid_output:  # a transient API error must not become a cached skip
+            failures["streak"] = 0
             cache[key] = {"confidence": p.confidence, "action": p.action.value,
                           "rationale": p.rationale}
             if cache_path:
                 cache_path.write_text(json.dumps(cache))
+        else:
+            failures["streak"] += 1
+            if failures["streak"] >= MAX_FAILED_STREAK:
+                sys.exit(f"{MAX_FAILED_STREAK} model calls failed in a row (rate limit, quota or "
+                         "key). Stopping: a thinned calibration must not pass as a finished run.")
         return p
 
     return propose, f"{base.model}@{base.base_url}"
