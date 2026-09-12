@@ -40,6 +40,9 @@ jobs:
     timeout-minutes: 60
     env:
       LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
+      # Only read when LLM_BASE_URL points at AgentRouter, which is not OpenAI-compatible.
+      AGENTIC_API_KEY: ${{ secrets.AGENTIC_API_KEY }}
+      LLM_ROUTE_KEY: ${{ vars.LLM_ROUTE_KEY }}
       LLM_BASE_URL: ${{ vars.LLM_BASE_URL }}
       # The table has to name the model that actually answered, so this is pinned to the
       # model the cache was built with rather than whatever the live bot is running today.
