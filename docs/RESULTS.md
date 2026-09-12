@@ -74,11 +74,40 @@ the guarded book loses nothing.
 - **Live paper trades are still pending.** The bot watches 22 coins every 15 minutes; the pattern
   fires roughly 1.7 times a day per 10 coins, and this model takes about 8% of what it sees.
 
-## 5. Live paper account
+## 5. Why fills are simulated rather than sent to the Bitget demo exchange
 
-Running since 11 Sep 2026 on GitHub Actions, one cycle every 15 minutes, orders placed on a Bitget
-demo account with attached stop-loss and take-profit, every take also recorded in an unguarded
-shadow book. Current figures, and the full log:
+The demo exchange is wired up and works: `scripts/check_bitget_demo.py` opens a real demo position
+with attached stop and target through the bot's own order code, reads it back off the exchange, and
+closes it. It is not the book of record, and the measurements below are why. Both were taken on
+12 Sep 2026 from a GitHub runner, and the comparison is reproducible with
+`--compare-prices` on the `Bitget demo check` workflow.
+
+- **The demo book is not the public market.** A test LTCUSDT short of 29,236 USDT notional filled at
+  55.74 while LTC was 54.08 on the public market: 3.1% of adverse entry, against the 5 bps of
+  slippage the book models, and it closed 1.3% away again seconds later. Across the watchlist the
+  demo last price sat within 0.25% of public for 8 of 15 quoted symbols, but 5.05% away on LTC and
+  5.32% on DOT. Outcomes are labelled by walking public candles, so a fill several percent off the
+  public market makes the return, drawdown and Sharpe describe neither market.
+- **The demo exchange does not list seven of the 22 symbols.** ZEC, SUI, ENA, WLD, ONDO, ARB and TAO
+  USDT perps all answer `40034 Parameter <symbol> does not exist`, so every order on those coins is
+  refused however good the setup. One of the two live proposals so far was WLDUSDT.
+
+So `execution.fills` in `config/settings.yaml` is `sim`: every fill is priced off the same public
+candles the labeler scores the outcome against, at 5 bps slippage and 4 bps fees, which is what the
+300-scenario bank used. The choice is explicit rather than inherited from whether API keys happen to
+be set, the status line names the destination (`fills=sim`), and `trades.csv` carries a `fill` column
+per order. The handbook allows paper trading; this keeps the paper coherent.
+
+The first live order exposed the reverse of this in the bot itself. Bitget refused it with HTTP 400,
+the broker fell back to a simulated fill with only a warning, and the status kept reporting fills on
+the demo account, because the keys were set. The refusal is now carried on the order, named in the
+health line, and turns the cycle red.
+
+## 6. Live paper account
+
+Running since 11 Sep 2026 on GitHub Actions, one cycle every 15 minutes, fills simulated on public
+candles with attached stop-loss and take-profit, every take also recorded in an unguarded shadow
+book. Current figures, and the full log:
 
 - https://tare-rust.vercel.app (Live tab)
 - https://tare-rust.vercel.app/api/log (`?file=trades.csv`, `decisions.csv`, `shadow_trades.csv`, `equity.csv`)

@@ -484,7 +484,9 @@ def main() -> None:
         the order the fill was simulated, and the status must say that rather than keep
         advertising demo-account fills.
         """
-        if not broker._use_api:
+        if broker.fills == "bitget-demo" and not broker._has_keys:
+            fills_note = "fills=local-sim-no-keys"
+        elif not broker._use_api:
             fills_note = "fills=local-sim"
         elif broker.api_failures:
             fills_note = "fills=local-sim-after-reject"

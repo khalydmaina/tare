@@ -287,6 +287,7 @@ class PaperBroker:
         passphrase: Optional[str] = None,
         *,
         paper: bool = True,
+        fills: Optional[str] = None,
         starting_equity: float = 10_000.0,
         slippage_bps: Optional[float] = None,
         fee_bps: Optional[float] = None,
@@ -305,7 +306,22 @@ class PaperBroker:
         self.fee_bps = float(fee_bps if fee_bps is not None else ex.get("fee_bps", 4))
         self.lot_step = float(lot_step if lot_step is not None else ex.get("lot_step", 0.001))
         self.account = account or PaperModeAccount(starting_equity)
-        self._use_api = bool(self.api_key and self.api_secret and self.passphrase)
+        self._has_keys = bool(self.api_key and self.api_secret and self.passphrase)
+        # Where fills come from is a choice, not an accident of which keys happen to be set.
+        # "sim" prices every fill off the same public candles the outcome labeler reads, so the
+        # book is coherent and auditable. "bitget-demo" sends the order to the demo exchange,
+        # whose book is thin enough to fill several percent away from the public market and
+        # which does not list every symbol in the watchlist.
+        self.fills = str(
+            fills if fills is not None else os.getenv("TARE_FILLS") or ex.get("fills", "sim")
+        ).lower()
+        if self.fills not in ("sim", "bitget-demo"):
+            raise ValueError(f"execution.fills must be 'sim' or 'bitget-demo', not {self.fills!r}")
+        self._use_api = self.fills == "bitget-demo" and self._has_keys
+        if self.fills == "bitget-demo" and not self._has_keys:
+            logger.warning(
+                "execution.fills is bitget-demo but the Bitget keys are not set; fills are simulated"
+            )
         self._specs: dict[str, dict[str, float]] = {}
         # Exchange rejections this process fell back to simulation for.
         self.api_failures: list[dict[str, str]] = []

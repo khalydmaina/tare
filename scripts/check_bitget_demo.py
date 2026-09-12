@@ -94,8 +94,9 @@ def main() -> int:
     args = parser.parse_args()
     symbol = args.symbol.upper()
 
-    broker = PaperBroker()
-    if not broker._use_api:
+    # This script exists to exercise the demo exchange, whatever the live book is set to.
+    broker = PaperBroker(fills="bitget-demo")
+    if not broker._has_keys:
         print("BITGET_API_KEY, BITGET_API_SECRET and BITGET_PASSPHRASE must all be set")
         return 1
 

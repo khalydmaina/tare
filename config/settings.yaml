@@ -56,6 +56,13 @@ execution:
   fee_bps: 4
   lot_step: 0.001
   paper_mode: true
+  # Book of record. "sim" fills on the same public candles the labeler scores outcomes
+  # against, at the slippage and fees above. "bitget-demo" routes to the Bitget demo
+  # exchange, measured 2026-09-12: it does not list ZEC, SUI, ENA, WLD, ONDO, ARB or TAO
+  # perps at all, and its thin book filled a test LTC short 3% away from the public market,
+  # which is 60x the modelled slippage, so a demo-filled book cannot be scored against
+  # public candles. See docs/RESULTS.md.
+  fills: sim
 
 recorder:
   db_path: "data/tare.db"

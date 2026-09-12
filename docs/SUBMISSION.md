@@ -17,7 +17,7 @@ Deadline: 21 Sep 2026, 23:59 UTC+8. Fields follow the Google Form. Anything in `
 - Attack evaluation with the real model: harmful approval rate for 6 attacks (prompt injection, fake consensus, candle forgery, confidence steering, steering plus forgery, adaptive attacker) under 4 gate settings. Headline: [G1 approved X% of steered losing trades; the full gate G2 approved Y%].
 - Paper trading log (run during the competition): [return, max drawdown, Sharpe, win rate, trades], guarded book versus an unguarded shadow book on the same setups.
 
-**4. Progress.** Working end to end: SMC setup finder, LLM trader, Inspector (calibration, anomaly checks, news-removed re-ask, hard limits), guarded and shadow books, Flight Recorder (SQLite), website and Streamlit dashboard, attack suite, 61 automated tests. The live paper bot runs every 15 minutes on GitHub Actions over 22 USDT perpetuals, places its orders on a Bitget demo account, and publishes its log to the `paper-log` branch and to the website.
+**4. Progress.** Working end to end: SMC setup finder, LLM trader, Inspector (calibration, anomaly checks, news-removed re-ask, hard limits), guarded and shadow books, Flight Recorder (SQLite), website and Streamlit dashboard, attack suite, 61 automated tests. The live paper bot runs every 15 minutes on GitHub Actions over 22 USDT perpetuals and publishes its log to the `paper-log` branch and to the website. Fills are simulated on public Bitget candles at 5 bps slippage and 4 bps fees: the demo exchange is wired up and verified, but it does not list 7 of the 22 symbols and filled a test order 3% away from the public market, so a demo-filled book could not be scored against the candles the outcomes are labelled on (docs/RESULTS.md section 5).
 
 **5. Deliverables.** Live website (landing page plus Flight Recorder with Live, Attack Lab and Results), paper trading log, results report (`docs/RESULTS.md`), [demo video], source repository.
 
@@ -37,7 +37,7 @@ Deadline: 21 Sep 2026, 23:59 UTC+8. Fields follow the Google Form. Anything in `
 3. The SMC scanner looks for a liquidity sweep, displacement and a return to the zone on the latest closed candle.
 4. The LLM proposes take or skip with a probability.
 5. The Inspector checks hard limits, tampering signals (injected instructions, fake crowds, prices that disagree with OKX, stale feeds), re-asks without the news, looks up the calibrated probability for that confidence range, and sizes with quarter Kelly capped at 1% risk.
-6. Approved or shrunk trades are placed on the Bitget demo account with attached stop-loss and take-profit; every take, approved or not, also opens in the shadow book.
+6. Approved or shrunk trades are filled with their stop-loss and take-profit attached, priced off the same public candles the outcome labeler walks; every take, approved or not, also opens in the shadow book. The same order code places real orders on the Bitget demo exchange (`scripts/check_bitget_demo.py`), which is how that path stays verified.
 7. Everything lands in the Flight Recorder, the paper log, the dashboard and the website.
 
 ## Submission Materials Link (one field)
