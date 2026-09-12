@@ -156,12 +156,16 @@ def decide(
         rr = reward / proposal.risk_distance if proposal.risk_distance else 0.0
     p_be = 1.0 / (1.0 + rr) if rr > 0 else 1.0
 
-    # An unmeasured bucket has no p_cal, only the prior, and Kelly sizing off a number
-    # nobody measured is the same mistake in the other direction: the first live trade was
-    # sized at full risk because the invented 0.35 happened to clear breakeven. So while a
-    # bucket is unmeasured every trade in it is exploration, sized as exploration, on a
-    # daily budget. The anomaly layer and the hard limits above still apply, and a bucket
-    # that has reached min_n and still shows no edge is vetoed on the evidence below.
+    # An unmeasured bucket has no p_cal, only the prior, so there is nothing for Kelly to
+    # size from: the first live trade risked 1% at 2.9x leverage on a cell with n=0, purely
+    # because the invented 0.35 happened to clear breakeven, while a slightly worse setup in
+    # the same cell would have been vetoed. Neither answer is supported by evidence. While a
+    # bucket is unmeasured the trade is exploration, so it is sized as exploration and spends
+    # a daily budget. This is about the guarded book: vetoing does not starve the calibration
+    # matrix, which fills from the shadow book's outcomes on every take either way. It is
+    # what lets the guarded book have a record at all, and the gate's discrimination be
+    # observed rather than asserted. The anomaly layer and the hard limits above still apply,
+    # and a bucket that has reached min_n and still shows no edge is vetoed below.
     if probe_enabled and p_source == "prior":
         if ctx.probes_today >= probe_max_per_day:
             return Decision.veto(
