@@ -22,6 +22,10 @@ on:
         type: choice
         options: ["long", "short"]
         default: "long"
+      compare_prices:
+        description: "Compare demo-environment prices against the public market"
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -38,6 +42,7 @@ jobs:
       SYMBOL: ${{ inputs.symbol }}
       NOTIONAL: ${{ inputs.notional }}
       SIDE: ${{ inputs.side }}
+      COMPARE: ${{ inputs.compare_prices }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -50,4 +55,5 @@ jobs:
         run: |
           if [ "$ORDER" = "true" ]; then set -- --order --side "$SIDE"; fi
           if [ -n "$NOTIONAL" ]; then set -- "$@" --notional "$NOTIONAL"; fi
+          if [ "$COMPARE" = "true" ]; then set -- "$@" --compare-prices; fi
           python scripts/check_bitget_demo.py --symbol "$SYMBOL" "$@"
