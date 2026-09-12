@@ -20,6 +20,7 @@ import signal
 import sys
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Optional
@@ -190,22 +191,34 @@ def run_cycle(
         broker.account.loss_cooldown = (int(cooldown.get("losses", 3)), float(cooldown.get("hours", 4)))
     broker.account.roll_day(now)
 
+    symbols = list(market["symbols"])
+
+    def fetch(symbol: str) -> tuple[list[Candle], list[Candle], list[Candle], list[Candle]]:
+        return (
+            bitget.fetch_klines(symbol, entry_tf, limit),
+            bitget.fetch_klines(symbol, "1h", max(limit, REGIME_1H_BARS)),
+            bitget.fetch_klines(symbol, "4h", limit),
+            ref.fetch_klines(symbol, entry_tf, limit),
+        )
+
+    # Four calls per coin, so the coins run side by side: 25 of them still fit in one cycle
+    fetched: dict[str, tuple[list[Candle], list[Candle], list[Candle], list[Candle]]] = {}
+    if not offline and symbols:
+        with ThreadPoolExecutor(max_workers=min(8, len(symbols))) as pool:
+            pending = {pool.submit(fetch, s): s for s in symbols}
+            for done in as_completed(pending):
+                symbol = pending[done]
+                try:
+                    fetched[symbol] = done.result()
+                except Exception as exc:
+                    # Never trade or calibrate on made-up candles in a real run.
+                    log.warning("%s: feed fetch failed (%s); skipping symbol this cycle", symbol, exc)
+
     feeds: dict[str, tuple[list[Candle], list[Candle], list[Candle], list[Candle]]] = {}
-    for symbol in market["symbols"]:
-        try:
-            if offline:
-                raise RuntimeError("offline mode")
-            feeds[symbol] = (
-                bitget.fetch_klines(symbol, entry_tf, limit),
-                bitget.fetch_klines(symbol, "1h", max(limit, REGIME_1H_BARS)),
-                bitget.fetch_klines(symbol, "4h", limit),
-                ref.fetch_klines(symbol, entry_tf, limit),
-            )
-        except Exception as exc:
-            if not offline:
-                # Never trade or calibrate on made-up candles in a real run.
-                log.warning("%s: feed fetch failed (%s); skipping symbol this cycle", symbol, exc)
-                continue
+    for symbol in symbols:  # settings order, whatever order the fetches finished in
+        if symbol in fetched:
+            feeds[symbol] = fetched[symbol]
+        elif offline:
             base = {"BTCUSDT": 95000.0, "ETHUSDT": 3500.0, "SOLUSDT": 180.0}.get(symbol, 100.0)
             feeds[symbol] = (
                 _synth_klines(symbol, entry_tf, limit, base),
