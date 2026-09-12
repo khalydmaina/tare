@@ -11,6 +11,8 @@ from typing import Any, Optional, Sequence
 
 from openai import OpenAI
 
+from trader.agentrouter import AgentRouterClient, looks_like_agentrouter
+
 from core.config import load_settings
 from core.schemas import Action, Candle, Proposal, Setup, Side
 
@@ -156,13 +158,31 @@ class LLMTrader:
         self.max_retries = int(llm.get("max_retries", 2))
         self.prompt_version = str(llm.get("prompt_version", "trader_v2"))
         key_env = str(llm.get("api_key_env", "XAI_API_KEY"))
-        self.api_key = os.getenv("LLM_API_KEY") or os.getenv(key_env, "") or os.getenv("XAI_API_KEY", "")
+        self.agentrouter = looks_like_agentrouter(self.base_url)
+        self.api_key = (
+            (os.getenv("AGENTIC_API_KEY", "") if self.agentrouter else "")
+            or os.getenv("LLM_API_KEY")
+            or os.getenv(key_env, "")
+            or os.getenv("XAI_API_KEY", "")
+        )
         path = prompt_path or prompt_path_for(self.prompt_version)
         self.system_prompt = path.read_text(encoding="utf-8")
         self.json_mode = True  # switched off for providers that reject response_format
         self._client = client
         if self._client is None and self.api_key:
-            self._client = OpenAI(api_key=self.api_key, base_url=self.base_url)
+            if self.agentrouter:
+                # AgentRouter has no /v1/chat/completions, so the OpenAI client cannot
+                # reach it. Its execute route takes no response_format either, so the
+                # reply is prose-wrapped JSON and _extract_json does the rest.
+                self.json_mode = False
+                self._client = AgentRouterClient(
+                    api_key=self.api_key,
+                    base_url=self.base_url,
+                    route_key=os.getenv("LLM_ROUTE_KEY", ""),
+                    provider=os.getenv("LLM_PROVIDER", ""),
+                )
+            else:
+                self._client = OpenAI(api_key=self.api_key, base_url=self.base_url)
 
     def propose_mock(
         self,
