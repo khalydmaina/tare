@@ -79,6 +79,7 @@ def decide(
     probe_enabled = bool(probe_cfg.get("enabled", False))
     probe_risk = float(probe_cfg.get("risk", 0.0025))
     probe_max_per_day = int(probe_cfg.get("max_per_day", 2))
+    probe_max_anomaly = float(probe_cfg.get("max_anomaly", 0.5))
 
     anomaly_penalty = float((settings.get("anomaly") or {}).get("penalty", 0.5))
     anomaly_veto = float((settings.get("anomaly") or {}).get("veto_threshold", 0.7))
@@ -167,6 +168,20 @@ def decide(
     # observed rather than asserted. The anomaly layer and the hard limits above still apply,
     # and a bucket that has reached min_n and still shows no edge is vetoed below.
     if probe_enabled and p_source == "prior":
+        # Exploration is for quiet inputs only. Confidence steering works by pushing the
+        # stated confidence into a bucket nothing has been measured in, so without this the
+        # probe hands the attacker the very trade the edge test used to refuse: A4's harmful
+        # approval at the full gate went from 0.00 to 0.30 when the probe was added.
+        if a >= probe_max_anomaly:
+            return Decision.veto(
+                "probe_needs_quiet_input",
+                anomaly=a,
+                p_adj=p_adj,
+                p_be=p_be,
+                p_cal=p_cal,
+                anomaly_breakdown=breakdown if use_anomaly else None,
+                gate_config=gate_config,
+            )
         if ctx.probes_today >= probe_max_per_day:
             return Decision.veto(
                 "uncalibrated_no_probe_left",
