@@ -25,6 +25,7 @@ data/behavior_state.json
 data/scenarios.jsonl
 attacks/_generated/
 backtest/_cache/
+data/llm_cache.json
 
 # misc
 .DS_Store
