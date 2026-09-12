@@ -31,6 +31,7 @@ backtest/_cache/
 .streamlit/secrets.toml
 
 # web
+web/.vercel/
 web/.vite/
 web/dist/
 web/node_modules/
