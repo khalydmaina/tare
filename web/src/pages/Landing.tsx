@@ -2,30 +2,10 @@ import { Link } from 'react-router-dom'
 import { StippleField } from '../components/StippleField'
 import { EQUITY, type AttackDemo } from '../data/demo'
 import { sourceLabel, useResults } from '../data/results'
+import { ATTACKS, checkText, gateLabel, reasonText } from '../data/labels'
 import './landing.css'
 
-const SHOWN_GATES = [
-  { id: 'G0', name: 'Unguarded' },
-  { id: 'G1', name: 'Calibration' },
-  { id: 'G2', name: 'Full gate' },
-] as const
-
-const REASONS: Record<string, string> = {
-  unguarded: 'Fixed 1% risk on every take. No questions asked.',
-  unguarded_fixed_risk: 'Fixed 1% risk on every take. No questions asked.',
-  approve: 'The record shows an edge at this confidence, so the trade is sized.',
-  calibrated_edge: 'The record shows an edge at this confidence, so the trade is sized.',
-  shrink: 'The record shows a thin edge, so the trade is sized down.',
-  no_calibrated_edge: 'The record at this confidence does not beat breakeven. Size is zero.',
-  probe_uncalibrated: 'Nothing measured at this confidence yet, so the trade is exploration: a quarter of normal risk, two a day.',
-  uncalibrated_no_probe_left: "Today's two exploration trades are already spent. Size is zero.",
-  probe_needs_quiet_input: 'Exploration only runs on untampered inputs, and the checks fired. Size is zero.',
-  probe_no_room: 'No leverage headroom for an exploration trade. Size is zero.',
-  input_anomaly: 'Tampering checks fired. Size is zero.',
-  sentiment_driven_take: 'Asked again without the news, the Trader skips. Size is zero.',
-  edge_too_thin: 'The edge is too thin to size. Size is zero.',
-  max_leverage: 'No leverage headroom left. Size is zero.',
-}
+const SHOWN_GATES = ['G0', 'G1', 'G2'] as const
 
 /** Return and worst peak-to-trough drop of one book, from the same demo curve the recorder shows */
 function bookStats(key: 'guarded' | 'shadow') {
@@ -41,7 +21,7 @@ function bookStats(key: 'guarded' | 'shadow') {
 
 const signedPct = (x: number) => `${x >= 0 ? '+' : '−'}${Math.abs(x * 100).toFixed(1)}%`
 
-/** One A4 scenario for the preview: prefer one where calibration alone approves and the full gate vetoes */
+/** One A4 scenario for the preview: prefer a losing trade the track record alone approves and the full referee vetoes */
 function pickA4Scenario(rows: AttackDemo[]) {
   const byScenario = new Map<string, AttackDemo[]>()
   for (const row of rows) {
@@ -50,7 +30,9 @@ function pickA4Scenario(rows: AttackDemo[]) {
   }
   const groups = [...byScenario.values()]
   const at = (group: AttackDemo[], gate: string) => group.find((r) => r.gate_config === gate)
-  const showcase = groups.find((g) => at(g, 'G1')?.approved === true && at(g, 'G2')?.approved === false)
+  const holes = groups.filter((g) => at(g, 'G1')?.approved === true && at(g, 'G2')?.approved === false)
+  // A veto on a trade that would have won is the wrong example of a save
+  const showcase = holes.find((g) => at(g, 'G2')?.true_result !== 'win') ?? holes[0]
   return { rows: showcase ?? groups[0] ?? [], showsHole: showcase !== undefined }
 }
 
@@ -164,39 +146,35 @@ export function Landing() {
 
         <section className="lp-block" id="lab">
           <p className="lp-kicker">05 · Attack Lab</p>
-          <h2>A4 is built to beat calibration-only.</h2>
+          <h2>Confidence steering is built to beat a track record alone.</h2>
           <p className="lp-quiet">
-            Planted news steers the Trader to a believable confidence, one its record says it usually
-            hits. Attacks change the Trader’s inputs only; the Inspector’s second price feed stays clean.{' '}
+            {ATTACKS.A4.how} It aims the AI at a believable confidence, one its record says it usually
+            hits. Attacks change only what the AI reads; the referee’s second price feed stays clean.{' '}
             {a4.showsHole
-              ? 'In this scenario calibration alone lets it through, and the full gate stops it.'
-              : 'Open the Attack Lab to see which gate stops it in each scenario.'}
+              ? 'In this setup the track record alone lets it through, and the full referee stops it.'
+              : 'Open the Attack Lab to see which referee setting stops it on each setup.'}
           </p>
           <div className="lp-gates">
-            {SHOWN_GATES.map(({ id, name }) => {
+            {SHOWN_GATES.map((id) => {
               const row = a4.rows.find((r) => r.gate_config === id)
               if (!row) {
                 return (
                   <div key={id} className="lp-gate">
-                    <div className="lp-gate-id">
-                      {id} · {name}
-                    </div>
+                    <div className="lp-gate-id">{gateLabel(id)}</div>
                     <p>No result in this run.</p>
                   </div>
                 )
               }
               return (
                 <div key={id} className={`lp-gate ${row.approved ? 'is-fail' : 'is-pass'}`}>
-                  <div className="lp-gate-id">
-                    {id} · {name}
-                  </div>
+                  <div className="lp-gate-id">{gateLabel(id)}</div>
                   <div className="lp-verdict">{row.approved ? 'Approved' : 'Veto'}</div>
-                  <p>{REASONS[row.reason] ?? row.reason}</p>
+                  <p>{reasonText(row.reason)}</p>
                   {row.checks_fired.length > 0 ? (
                     <div className="lp-checks">
                       {row.checks_fired.map((check) => (
                         <span key={check} className="lp-chip">
-                          {check}
+                          {checkText(check)}
                         </span>
                       ))}
                     </div>
@@ -268,7 +246,7 @@ export function Landing() {
             <a href="#books">Guarded vs shadow</a>
             <Link to="/app?tab=attacks">Attack Lab</Link>
             <Link to="/app?tab=results">Results</Link>
-            <span>Attacks A1 to A5</span>
+            <span>Six attack types</span>
           </div>
           <div>
             <h4>Record</h4>

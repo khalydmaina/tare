@@ -18,6 +18,7 @@ import { EquityChart } from '../components/EquityChart'
 import { BUCKET_GAPS, DECISIONS, EQUITY, METRICS, RELIABILITY } from '../data/demo'
 import { agoLabel, isFresh, useLive, type LiveDecision } from '../data/live'
 import { GATES, pct, sourceLabel, useResults } from '../data/results'
+import { ATTACKS, GATE_NAMES, attackLabel, checkText, gateLabel, reasonText } from '../data/labels'
 
 type Tab = 'live' | 'attacks' | 'results'
 const TABS: readonly Tab[] = ['live', 'attacks', 'results']
@@ -52,7 +53,12 @@ export function FlightRecorder() {
   const results = useResults()
   const [pickedScenario, setScenario] = useState<string | null>(null)
   const [pickedAttack, setAttack] = useState<string | null>(null)
-  const scenario = pickedScenario ?? results.scenarios[0] ?? ''
+  // Open on a losing trade that confidence steering got past everything but the full referee
+  const showcase = results.rows.find(
+    (r) => r.attack === 'A4' && r.gate_config === 'G2' && !r.approved && r.true_result !== 'win' &&
+      results.rows.some((o) => o.scenario_id === r.scenario_id && o.attack === 'A4' && o.gate_config === 'G1' && o.approved),
+  )?.scenario_id
+  const scenario = pickedScenario ?? showcase ?? results.scenarios[0] ?? ''
   const attack =
     pickedAttack ?? (results.attacks.includes('A4') ? 'A4' : (results.attacks[0] ?? 'clean'))
 
@@ -187,10 +193,10 @@ export function FlightRecorder() {
             <span className="font-medium text-white">VETO</span>
             <span className="text-ink/90">
               {' '}
-              - {latest.symbol.replace('USDT', '')} · {latest.reason}
-              {latest.p_adj !== null ? ` · p_adj ${fmt(latest.p_adj)} < breakeven ${fmt(latest.p_be)}` : ''}
-              {' '}· anomaly {fmt(latest.anomaly)}
-              {latest.checks.length ? ` · ${latest.checks.join(', ')}` : ''}
+              - {latest.symbol.replace('USDT', '')} · {reasonText(latest.reason)}
+              {latest.p_adj !== null ? ` · adjusted odds ${fmt(latest.p_adj)} < breakeven ${fmt(latest.p_be)}` : ''}
+              {' '}· tampering score {fmt(latest.anomaly)}
+              {latest.checks.length ? ` · ${latest.checks.map(checkText).join(', ')}` : ''}
             </span>
             {isDemo ? (
               <span className="ml-2 inline-block rounded-[4px] border border-danger/60 px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-ink/80">
@@ -246,7 +252,7 @@ export function FlightRecorder() {
                 ) : null}
                 {live.bot ? (
                   <p className="mt-3 text-xs text-mute">
-                    AI {live.bot.model || 'unknown'} · gate {live.bot.gate || '-'} · {live.bot.fills}
+                    {gateLabel(live.bot.gate || '-')} · {live.bot.fills}
                     {live.bot.health ? ` · ${live.bot.health.replace(/^last cycle [^:]+: /, 'last cycle: ')}` : ''}
                   </p>
                 ) : null}
@@ -357,10 +363,10 @@ export function FlightRecorder() {
                       <tr>
                         <th className="pb-2 font-medium">Time</th>
                         <th className="pb-2 font-medium">Coin</th>
-                        <th className="pb-2 font-medium">Conf</th>
+                        <th className="pb-2 font-medium">Confidence</th>
                         <th className="pb-2 font-medium">Decision</th>
                         <th className="pb-2 font-medium">Reason</th>
-                        <th className="pb-2 font-medium">Anom</th>
+                        <th className="pb-2 font-medium">Tampering</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -379,7 +385,7 @@ export function FlightRecorder() {
                           <td className="py-2.5">
                             <KindPill kind={d.kind} />
                           </td>
-                          <td className="py-2.5 text-mute">{d.reason}</td>
+                          <td className="py-2.5 text-mute">{reasonText(d.reason)}</td>
                           <td className="tabular py-2.5">{fmt(d.anomaly)}</td>
                         </tr>
                       ))}
@@ -409,8 +415,8 @@ export function FlightRecorder() {
           <div className="space-y-4">
             <Panel title="Attack Lab">
               <p className="mb-4 max-w-[60ch] text-sm text-mute">
-                Attacks only change Trader inputs. The Inspector reference feed stays clean. Pick a
-                scenario and attack, then compare G0 / G1 / G2A / G2.
+                Each attack tampers only with what the AI reads; the referee's second price feed stays
+                clean. Pick a real setup and an attack, then see what each referee setting decided.
               </p>
               <p className="mb-4 inline-block rounded-[4px] border border-line-strong px-2 py-0.5 text-[11px] uppercase tracking-wide text-mute">
                 {sourceLabel(results)}
@@ -439,20 +445,25 @@ export function FlightRecorder() {
                   >
                     {results.attacks.map((a) => (
                       <option key={a} value={a}>
-                        {a}
+                        {attackLabel(a)}
                       </option>
                     ))}
                   </select>
                 </label>
               </div>
 
+              {ATTACKS[attack] ? (
+                <p className="mb-4 max-w-[70ch] text-sm text-ink">
+                  <span className="text-mute">{attackLabel(attack)}:</span> {ATTACKS[attack].how}
+                </p>
+              ) : null}
               <div className="grid gap-3 md:grid-cols-4">
                 {gateCols.map((row, i) => {
                   const gate = GATES[i]
                   if (!row) {
                     return (
                       <div key={gate} className="rounded-[4px] border border-line p-4 text-mute">
-                        {gate}: no row
+                        {gateLabel(gate)}: no result
                       </div>
                     )
                   }
@@ -464,24 +475,26 @@ export function FlightRecorder() {
                       }`}
                     >
                       <div className="flex justify-between text-sm">
-                        <span className="tabular text-mute">{gate}</span>
+                        <span className="text-mute">
+                          {gateLabel(gate)} <span className="tabular text-[11px]">({gate})</span>
+                        </span>
                         <span className={row.approved ? 'text-danger' : 'text-guarded'}>
                           {row.approved ? 'APPROVED' : 'VETO'}
                         </span>
                       </div>
                       <div className="mt-3 tabular text-3xl text-white">{row.confidence}</div>
-                      <div className="mt-1 text-sm text-mute">{row.reason}</div>
+                      <div className="mt-1 text-sm text-mute">{reasonText(row.reason)}</div>
                       <div className="mt-3 text-xs text-mute">
-                        anomaly {Number(row.anomaly ?? 0).toFixed(2)} · true {row.true_result}
+                        tampering score {Number(row.anomaly ?? 0).toFixed(2)} · trade outcome {row.true_result}
                       </div>
                       {row.checks_fired.length > 0 ? (
                         <div className="mt-3 flex flex-wrap gap-1">
                           {row.checks_fired.map((c) => (
                             <span
                               key={c}
-                              className="rounded-[4px] border border-line-strong px-2 py-0.5 tabular text-[11px]"
+                              className="rounded-[4px] border border-line-strong px-2 py-0.5 text-[11px]"
                             >
-                              {c}
+                              {checkText(c)}
                             </span>
                           ))}
                         </div>
@@ -490,29 +503,28 @@ export function FlightRecorder() {
                   )
                 })}
               </div>
-              {attack === 'A4' ? (
-                <p className="mt-4 text-sm text-mute">
-                  A4 is pure steering text aimed at a well-calibrated bucket. Compare G2A (anomaly
-                  layer only) with G2 (ablation: text may lower confidence, never raise it).
-                </p>
-              ) : null}
+              <p className="mt-4 text-sm text-mute">
+                The big number is the AI's stated confidence. Compare {gateLabel('G2A')} with{' '}
+                {gateLabel('G2')}: the full referee asks the AI again with the news removed, so text
+                can lower its confidence but never raise it.
+              </p>
             </Panel>
           </div>
         ) : null}
 
         {tab === 'results' ? (
-          <Panel title="Harmful approval rate">
+          <Panel title="Losing trades approved, by attack">
             <p className="mb-3 inline-block rounded-[4px] border border-line-strong px-2 py-0.5 text-[11px] uppercase tracking-wide text-mute">
               {sourceLabel(results)}
             </p>
             <div className="overflow-x-auto">
-              <table className="w-full min-w-[480px] text-left text-sm">
+              <table className="w-full min-w-[640px] text-left text-sm">
                 <thead className="text-mute">
                   <tr>
                     <th className="pb-2 font-medium">Attack</th>
                     {GATES.map((g) => (
                       <th key={g} className="pb-2 font-medium">
-                        {g}
+                        {gateLabel(g)}
                       </th>
                     ))}
                   </tr>
@@ -520,7 +532,7 @@ export function FlightRecorder() {
                 <tbody>
                   {results.har.map((r) => (
                     <tr key={r.attack} className="border-t border-line">
-                      <td className="py-2.5">{r.attack}</td>
+                      <td className="py-2.5">{attackLabel(r.attack)}</td>
                       {GATES.map((g) => (
                         <td key={g} className={`tabular py-2.5 ${g === 'G2' ? '' : 'text-mute'}`}>
                           {pct(r[g])}
@@ -531,6 +543,18 @@ export function FlightRecorder() {
                 </tbody>
               </table>
             </div>
+            <p className="mt-4 max-w-[75ch] text-sm text-mute">
+              Each cell is the share of losing setups that setting let through. Lower is better; the
+              no-attack row is the baseline.
+            </p>
+            <dl className="mt-3 grid gap-x-6 gap-y-2 text-sm md:grid-cols-2">
+              {GATES.map((g) => (
+                <div key={g}>
+                  <dt className="inline text-ink">{GATE_NAMES[g].name}: </dt>
+                  <dd className="inline text-mute">{GATE_NAMES[g].how}</dd>
+                </div>
+              ))}
+            </dl>
           </Panel>
         ) : null}
       </main>
