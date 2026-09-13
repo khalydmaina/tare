@@ -54,7 +54,9 @@ https://tare-rust.vercel.app
 
 ## Field: X Promotional Post Link
 
-[link to your post]
+https://x.com/cipher_k1/status/2099146240365670455
+
+[Still to do: retweet Bitget's official hackathon post once it is published.]
 
 Post from your own account as a 4-post thread, and retweet Bitget's official hackathon post once they publish it. The form takes the link to post 1, which carries both tags. Keep each post within 280 characters even with Premium, so none is cut off behind "Show more" in the timeline (X counts an arrow as 2 characters; post 3 is 268 counted that way).
 
