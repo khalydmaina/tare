@@ -56,7 +56,9 @@ https://tare-rust.vercel.app
 
 [link to your post]
 
-Post from your own account, tag both, and retweet Bitget's official hackathon post once they publish it. Attach docs/media/attack-lab.png and docs/media/results.png. With images attached X shows the images instead of the link's preview card; post without images and the card appears instead.
+Post from your own account as a 4-post thread, and retweet Bitget's official hackathon post once they publish it. The form takes the link to post 1, which carries both tags. Keep each post within 280 characters even with Premium, so none is cut off behind "Show more" in the timeline (X counts an arrow as 2 characters; post 3 is 268 counted that way).
+
+**Post 1** · image: docs/media/link-card.png (the preview card, readable on a phone)
 
 > My AI trader said it was 60-69% sure. It was right 29% of the time.
 >
@@ -65,6 +67,32 @@ Post from your own account, tag both, and retweet Bitget's official hackathon po
 > https://tare-rust.vercel.app
 >
 > #BitgetHackathon @Bitget_AI
+
+**Post 2** (reply to post 1) · image: docs/media/attack-lab.png
+
+> How it works: the AI only proposes. A referee that is plain code, not another AI, decides.
+>
+> It checks the AI's hit rate at that confidence, looks for tampering, and asks the AI again with the news removed.
+>
+> Here a losing DOGE trade gets past everything except that last check.
+
+**Post 3** (reply to post 2) · image: docs/media/results.png
+
+> I attacked it 6 ways on real past setups. Losing trades approved, no referee vs full referee:
+>
+> Hidden commands: 50% → 0%
+> Forged charts: 33% → 0%
+> Fake crowd: 37% → 3%
+> Steering news: 90% → 0%
+>
+> An AI attacker rewriting headlines got 1 of 12 through. Fixing that next.
+
+**Post 4** (reply to post 3) · no image
+
+> It's trading live on paper every 15 minutes across 22 coins, with a no-referee account beside it for comparison.
+>
+> Every proposal, veto and result is public:
+> https://tare-rust.vercel.app/api/log
 
 Optional progress posts before submission (each adds reach):
 
