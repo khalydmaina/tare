@@ -1,0 +1,37 @@
+<!doctype html><html><head><meta charset="utf-8">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&family=Poppins:wght@700&display=block" rel="stylesheet">
+<style>
+*{box-sizing:border-box;margin:0}
+body{width:1200px;height:630px;background:#050505;color:#f0f0f0;font-family:'IBM Plex Sans',sans-serif;position:relative;overflow:hidden}
+.dots{position:absolute;inset:0;background-image:radial-gradient(#1c1c1c 1.2px,transparent 1.3px);background-size:22px 22px;mask-image:linear-gradient(90deg,transparent 0%,#000 55%,#000 100%)}
+.frame{position:absolute;inset:36px;border:1px solid #222}
+.left{position:absolute;left:84px;top:86px;width:560px}
+.kicker{font-family:'IBM Plex Mono',monospace;font-size:17px;letter-spacing:.14em;text-transform:uppercase;color:#8a8a8a}
+.word{font-family:Poppins,sans-serif;font-weight:700;font-size:168px;letter-spacing:-.04em;line-height:1;margin-top:26px;color:#fff}
+.tag{font-size:34px;font-weight:500;margin-top:22px;line-height:1.25;color:#f0f0f0}
+.sub{font-size:22px;color:#cfcfcf;margin-top:18px;line-height:1.45;max-width:520px}
+.card{position:absolute;right:84px;top:120px;width:410px;background:#0c0c0c;border:1px solid #333;padding:30px 32px}
+.card h3{font-family:'IBM Plex Mono',monospace;font-weight:500;font-size:15px;letter-spacing:.1em;text-transform:uppercase;color:#8a8a8a;line-height:1.5}
+.row{display:flex;justify-content:space-between;align-items:baseline;margin-top:26px;padding-top:22px;border-top:1px solid #222}
+.row:first-of-type{border-top:0;padding-top:0}
+.lbl{font-size:21px;color:#cfcfcf}
+.num{font-family:'IBM Plex Mono',monospace;font-size:64px;font-weight:500;line-height:1}
+.red{color:#ef4444}.green{color:#22c55e}
+.note{font-family:'IBM Plex Mono',monospace;font-size:14px;color:#8a8a8a;margin-top:22px;line-height:1.5}
+.foot{position:absolute;left:84px;bottom:70px;font-family:'IBM Plex Mono',monospace;font-size:20px;color:#8a8a8a;letter-spacing:.04em}
+</style></head><body>
+<div class="dots"></div><div class="frame"></div>
+<div class="left">
+  <div class="kicker">LLM trader · non-LLM referee</div>
+  <div class="word">tare</div>
+  <div class="tag">Zero the confidence.<br>Weigh the record.</div>
+  <div class="sub">Every AI trade is checked against the model's own track record before it is sized.</div>
+</div>
+<div class="card">
+  <h3>Losing trades approved when news is written to steer the AI</h3>
+  <div class="row" style="margin-top:28px"><span class="lbl">No referee</span><span class="num red">90%</span></div>
+  <div class="row"><span class="lbl">With tare</span><span class="num green">0%</span></div>
+  <div class="note">Measured on 40 real setups</div>
+</div>
+<div class="foot">tare-rust.vercel.app · live paper trading log</div>
+</body></html>
