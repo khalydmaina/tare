@@ -56,7 +56,7 @@ https://tare-rust.vercel.app
 
 [link to your post]
 
-Post from your own account, tag both, and retweet Bitget's official hackathon post once they publish it. Attach the Attack Lab screenshot or a short screen recording; the link also shows a preview card.
+Post from your own account, tag both, and retweet Bitget's official hackathon post once they publish it. Attach docs/media/attack-lab.png and docs/media/results.png. With images attached X shows the images instead of the link's preview card; post without images and the card appears instead.
 
 > My AI trader said it was 60-69% sure. It was right 29% of the time.
 >
