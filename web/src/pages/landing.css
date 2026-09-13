@@ -292,6 +292,7 @@
   border-radius: 4px;
   padding: 20px;
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 8px;
   align-content: start;
 }
@@ -330,6 +331,11 @@
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
+}
+/* Check chips carry a plain description now, so they wrap inside the card instead of widening it */
+.lp-checks .lp-chip {
+  white-space: normal;
+  line-height: 1.35;
 }
 .lp-row {
   margin-top: 20px;
