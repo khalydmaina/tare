@@ -66,7 +66,6 @@ export function Landing() {
         <a className="lp-brand" href="#top">
           tare
         </a>
-        <span className="lp-meta">Bitget AI · Genesis S2</span>
         <Link className="lp-ghost" to="/app">
           Enter
         </Link>
