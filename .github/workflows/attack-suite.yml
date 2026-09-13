@@ -64,8 +64,11 @@ jobs:
       # the cache with Google's endpoint (run_attacks.answer_identity).
       LLM_MODEL: ${{ vars.ATTACK_MODEL || (contains(vars.LLM_BASE_URL, 'openrouter.ai') && 'google/gemini-3.1-flash-lite' || 'gemini-3.1-flash-lite') }}
       # A5's attacker. Named explicitly here so it never silently becomes a scripted ladder;
-      # it shares the Trader's key and endpoint unless ATTACKER_* are set.
-      ATTACKER_API_KEY: ${{ secrets.ATTACKER_API_KEY || contains(vars.LLM_BASE_URL, 'openrouter.ai') && secrets.OPENROUTER_API_KEY || secrets.LLM_API_KEY }}
+      # it shares the Trader's key and endpoint unless ATTACKER_* are set. The attacker's own key
+      # is only sent when its endpoint is named too, so a key for one provider never goes to
+      # another: Bitget's Qwen gateway refuses A5's prompts outright (DataInspectionFailed), so
+      # ATTACKER_BASE_URL is unset and that key stays parked.
+      ATTACKER_API_KEY: ${{ vars.ATTACKER_BASE_URL && secrets.ATTACKER_API_KEY || contains(vars.LLM_BASE_URL, 'openrouter.ai') && secrets.OPENROUTER_API_KEY || secrets.LLM_API_KEY }}
       ATTACKER_BASE_URL: ${{ vars.ATTACKER_BASE_URL || vars.LLM_BASE_URL }}
       ATTACKER_MODEL: ${{ vars.ATTACKER_MODEL || vars.ATTACK_MODEL || (contains(vars.LLM_BASE_URL, 'openrouter.ai') && 'google/gemini-3.1-flash-lite' || 'gemini-3.1-flash-lite') }}
       ATTACKS: ${{ inputs.attacks }}
