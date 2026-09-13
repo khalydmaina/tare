@@ -117,8 +117,9 @@ jobs:
           else
             n=$(python -c "import json;print(len(json.load(open('data/llm_cache.json'))))")
             git commit -m "Cache $n model answers from the attack suite ($ATTACKS, ${LLM_MODEL})"
-            git pull --rebase -q origin main || true
-            git push
+            git pull --rebase --autostash -q origin main || true
+            # GitHub answers pushes with a 500 now and then; a measurement should not be lost to one
+            pushed=; for i in 1 2 3; do if git push; then pushed=1; break; fi; sleep 20; done; [ -n "$pushed" ]
             echo "kept the cache at $n answers"
           fi
 
@@ -133,6 +134,6 @@ jobs:
             git commit -m "Measure the attack suite: $ATTACKS over $GATES
 
           Model ${LLM_MODEL}, real scenario bank, run by the attack-suite workflow."
-            git pull --rebase -q origin main || true
-            git push
+            git pull --rebase --autostash -q origin main || true
+            pushed=; for i in 1 2 3; do if git push; then pushed=1; break; fi; sleep 20; done; [ -n "$pushed" ]
           fi
