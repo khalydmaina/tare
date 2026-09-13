@@ -1,0 +1,38 @@
+name: Trader model check
+
+# One real trading decision through a model endpoint, using a stored secret, to find out whether
+# a provider can stand in as the Trader and what a call costs in tokens. Makes one decision
+# (up to three requests if the reply is not valid JSON). Places no orders and writes nothing.
+on:
+  workflow_dispatch:
+    inputs:
+      provider:
+        description: "Which stored key and endpoint to check"
+        type: choice
+        options: ["qwen", "gemini"]
+        default: "qwen"
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      # The Qwen key from Bitget's hackathon subsidy is parked in ATTACKER_API_KEY: the gateway
+      # refuses A5's attack prompts, so it is kept as the Trader's backup instead.
+      CHECK_API_KEY: ${{ inputs.provider == 'qwen' && secrets.ATTACKER_API_KEY || secrets.LLM_API_KEY }}
+      CHECK_BASE_URL: ${{ inputs.provider == 'qwen' && 'https://hackathon.bitgetops.com/v1' || vars.LLM_BASE_URL }}
+      CHECK_MODEL: ${{ inputs.provider == 'qwen' && 'qwen3.8-max' || vars.LLM_MODEL }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install
+        run: pip install -q pydantic pandas numpy pyyaml python-dotenv tenacity scipy httpx openai
+      - name: Make one trading decision
+        run: |
+          set -o pipefail  # a failed check must fail the run, not the tee
+          python scripts/check_trader_model.py | tee -a "$GITHUB_STEP_SUMMARY"
